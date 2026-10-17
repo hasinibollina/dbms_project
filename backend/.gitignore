@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+.venv311/
+
+# Environment variables / secrets
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE files
+.vscode/
+.idea/
+
+# Python build files
+*.egg-info/
+dist/
+build/
