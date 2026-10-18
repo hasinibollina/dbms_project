@@ -1,29 +1,42 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Load variables from .env
-load_dotenv()
+# Locate and load environment variables from backend/.env or project root .env
+backend_env = Path(__file__).resolve().parent / ".env"
+root_env = Path(__file__).resolve().parent.parent / ".env"
 
-# Get the database URL
+if backend_env.exists():
+    load_dotenv(dotenv_path=backend_env)
+elif root_env.exists():
+    load_dotenv(dotenv_path=root_env)
+else:
+    load_dotenv()
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Create SQLAlchemy engine
-engine = create_engine(DATABASE_URL)
+if not DATABASE_URL:
+    raise ValueError(
+        "DATABASE_URL is not set in environment or .env file. "
+        "Please check your .env configuration."
+    )
+
+# Create database engine with pool pre-ping to handle stale connections
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+
+# Session factory for database transactions
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Declarative base class for ORM models
+Base = declarative_base()
 
 
-# Test database connection
-def test_connection():
+def get_db():
+    """Dependency helper to yield a database session per request."""
+    db = SessionLocal()
     try:
-        with engine.connect() as connection:
-            result = connection.execute(text("SELECT 1"))
-            print("Database connection successful!")
-            print("Result:", result.scalar())
-
-    except Exception as e:
-        print("Database connection failed!")
-        print(e)
-
-
-if __name__ == "__main__":
-    test_connection()
+        yield db
+    finally:
+        db.close()
