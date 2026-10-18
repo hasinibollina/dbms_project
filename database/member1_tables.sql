@@ -33,3 +33,15 @@ CREATE TABLE Venues (
     is_active      BOOLEAN NOT NULL DEFAULT TRUE,
     created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Module: Venue Operating Hours
+CREATE TABLE VenueOperatingHours (
+    hours_id    SERIAL PRIMARY KEY,
+    venue_id    INT NOT NULL REFERENCES Venues(venue_id) ON DELETE CASCADE,
+    day_of_week INT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),  -- 0=Mon ... 6=Sun
+    open_time   TIME,
+    close_time  TIME,
+    is_closed   BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE (venue_id, day_of_week),
+    CHECK (is_closed OR (open_time IS NOT NULL AND close_time IS NOT NULL AND open_time < close_time))
+);
