@@ -11,3 +11,10 @@ CREATE TABLE Users (
                   CHECK (role IN ('Attendee', 'Organizer', 'Admin')),
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Module: Event Categories
+CREATE TABLE Categories (
+    category_id SERIAL PRIMARY KEY,
+    name        VARCHAR(80) NOT NULL UNIQUE,
+    description VARCHAR(255)
+);
