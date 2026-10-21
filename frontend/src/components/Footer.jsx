@@ -51,7 +51,7 @@ export default function Footer() {
               <span>DBMS Schema</span>
             </div>
             <p className="text-xs text-sand/70 leading-relaxed">
-              PostgreSQL relational backend powering atomic ACID transactions, cascaded operating hours, and role-based access for Attendees, Organizers, and Admins.
+              PostgreSQL relational backend powering atomic ACID transactions, cascaded operating hours, and role-based access for Organizers and Admins.
             </p>
             <div className="flex flex-wrap gap-1.5 pt-1">
               <span className="text-[10px] px-2 py-0.5 rounded bg-sand/10 text-sand border border-sand/20 font-mono">

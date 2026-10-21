@@ -402,7 +402,7 @@ export default function Home() {
             HOW EVENTILION WORKS
           </h2>
           <p className="text-sm sm:text-base text-ink/70">
-            A seamless three-tier pipeline connecting attendees, venue operators, and event coordinators.
+            A seamless pipeline connecting venue operators, organizers, and event visitors.
           </p>
         </div>
 
@@ -462,7 +462,7 @@ export default function Home() {
                 Experience Events
               </h3>
               <p className="text-sm text-ink/75 leading-relaxed">
-                Attendees discover curated tech hackathons, concerts, and summits with interactive category filtering and quick pass registration.
+                Explore curated tech hackathons, concerts, and summits with interactive category filtering and seamless pass registration.
               </p>
             </div>
             <div className="pt-6 border-t border-sand-dark/60 mt-6 text-xs font-bold text-wine uppercase tracking-wider">

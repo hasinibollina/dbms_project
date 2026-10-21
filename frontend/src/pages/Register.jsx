@@ -15,7 +15,7 @@ export default function Register() {
     email: '',
     password: '',
     phone: '',
-    role: 'Attendee',
+    role: 'organizer',
   });
   const [loading, setLoading] = useState(false);
   const [formErrors, setFormErrors] = useState({});
@@ -185,49 +185,6 @@ export default function Register() {
                 className="w-full pl-11 pr-4 py-3 bg-sand-dark/30 border border-sand-dark rounded-xl text-sm font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all"
               />
             </div>
-          </div>
-
-          {/* Account Role Selector */}
-          <div className="space-y-1.5 pt-1">
-            <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-              Account Role
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <label className={`flex items-center gap-2 p-3 rounded-xl border cursor-pointer transition-all ${
-                formData.role === 'Attendee'
-                  ? 'bg-wine text-sand border-wine shadow-sm'
-                  : 'bg-sand-dark/30 border-sand-dark text-ink'
-              }`}>
-                <input
-                  type="radio"
-                  name="role"
-                  value="Attendee"
-                  checked={formData.role === 'Attendee'}
-                  onChange={handleInputChange}
-                  className="sr-only"
-                />
-                <span className="text-xs font-bold uppercase tracking-wider">Attendee</span>
-              </label>
-
-              <label className={`flex items-center gap-2 p-3 rounded-xl border cursor-pointer transition-all ${
-                formData.role === 'Organizer'
-                  ? 'bg-wine text-sand border-wine shadow-sm'
-                  : 'bg-sand-dark/30 border-sand-dark text-ink'
-              }`}>
-                <input
-                  type="radio"
-                  name="role"
-                  value="Organizer"
-                  checked={formData.role === 'Organizer'}
-                  onChange={handleInputChange}
-                  className="sr-only"
-                />
-                <span className="text-xs font-bold uppercase tracking-wider">Organizer</span>
-              </label>
-            </div>
-            <p className="text-[11px] text-ink/60 mt-1">
-              Organizers can register and edit venues and publish new events.
-            </p>
           </div>
 
           {/* Submit Button */}

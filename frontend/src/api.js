@@ -98,7 +98,7 @@ export const categoriesApi = {
 
 // Users / Auth API
 export const authApi = {
-  login: (credentials) => request('/users/login', {
+  login: (credentials) => request('/api/auth/login', {
     method: 'POST',
     body: credentials,
   }),
@@ -109,7 +109,7 @@ export const authApi = {
   }),
 };
 
-// Events API (May not exist yet; falls back to mock list in component with TODO)
+// Events API
 export const eventsApi = {
   getAll: (params = {}) => {
     const searchParams = new URLSearchParams();
@@ -121,6 +121,57 @@ export const eventsApi = {
     const query = searchParams.toString();
     return request(`/events${query ? `?${query}` : ''}`);
   },
+
+  create: (eventData) => request('/events', {
+    method: 'POST',
+    body: eventData,
+  }),
+
+  update: (id, eventData) => request(`/events/${id}`, {
+    method: 'PUT',
+    body: eventData,
+  }),
+
+  delete: (id) => request(`/events/${id}`, {
+    method: 'DELETE',
+  }),
+};
+
+// Admin Analytics API
+export const adminApi = {
+  getStats: () => request('/api/admin/stats'),
+  getEvents: () => request('/api/admin/events'),
+  getVenues: () => request('/api/admin/venues'),
+  getVendors: () => request('/api/admin/vendors'),
+};
+
+// Vendors API (Full CRUD)
+export const vendorsApi = {
+  getAll: (params = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.service_type) searchParams.set('service_type', params.service_type);
+    if (params.city) searchParams.set('city', params.city);
+    if (params.status) searchParams.set('status', params.status);
+    if (params.q) searchParams.set('q', params.q);
+    const query = searchParams.toString();
+    return request(`/api/vendors${query ? `?${query}` : ''}`);
+  },
+
+  getById: (id) => request(`/api/vendors/${id}`),
+
+  create: (vendorData) => request('/api/vendors', {
+    method: 'POST',
+    body: vendorData,
+  }),
+
+  update: (id, vendorData) => request(`/api/vendors/${id}`, {
+    method: 'PUT',
+    body: vendorData,
+  }),
+
+  delete: (id) => request(`/api/vendors/${id}`, {
+    method: 'DELETE',
+  }),
 };
 
 export default {
@@ -129,4 +180,6 @@ export default {
   categories: categoriesApi,
   auth: authApi,
   events: eventsApi,
+  admin: adminApi,
+  vendors: vendorsApi,
 };
