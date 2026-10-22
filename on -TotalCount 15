@@ -1,0 +1,15 @@
+[33me8c94ad[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Merge pull request #3 from SusmitaSuresh/feature/backend
+[33m54e9187[m[33m ([m[1;31morigin/feature/backend[m[33m)[m add member2 tables
+[33mbe6dc1c[m add create queries
+[33mcdab6ac[m get code
+[33me9cb9b8[m Merge branch 'main' of https://github.com/SusmitaSuresh/dbms_project into feature/backend
+[33me4c76fb[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mhasini[m[33m)[m Merge pull request #2 from SusmitaSuresh/snehaa
+[33mfbc7819[m[33m ([m[1;31morigin/snehaa[m[33m)[m feat(frontend): build Eventilion event management system with React, Vite, Tailwind CSS, and DBMS venue management
+[33m33ac241[m[33m ([m[1;32mmain[m[33m)[m Merge pull request #1 from SusmitaSuresh/snehaa
+[33md159ec6[m basic database connection
+[33m466c386[m docs: add comprehensive project documentation and database setup guide
+[33m07f6d25[m feat(data): add initial seed data for users, categories, and venues
+[33m949bec3[m feat(schema): add venue operating hours table with cascading foreign keys
+[33m154cb1a[m feat(schema): add venues table schema with capacity and pricing constraints
+[33mc0c811c[m feat(schema): add event categories table definition
+[33m42970fe[m feat(schema): create users table schema with role constraints
