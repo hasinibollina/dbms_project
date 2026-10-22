@@ -1405,3 +1405,15 @@ def update_operating_hours(
             status_code=500,
             detail="Could not update operating hours."
         )
+
+# --------------------------------------------------------------------------
+# Categories Endpoint
+# --------------------------------------------------------------------------
+@app.get("/api/categories")
+def list_categories():
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT category_id, name, description FROM categories ORDER BY name;")).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not load categories", e)
