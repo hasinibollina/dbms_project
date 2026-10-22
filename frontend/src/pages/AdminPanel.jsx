@@ -33,16 +33,7 @@ import {
   Cell,
 } from 'recharts';
 import { adminApi } from '../api';
-import {
-  SEED_STATS,
-  SEED_EVENTS,
-  SEED_VENUES,
-  SEED_VENDORS,
-  formatINR,
-  getStoredEvents,
-  getStoredVenues,
-  getStoredVendors,
-} from '../data/seedData';
+import { formatINR } from '../data/seedData';
 import { useToast } from '../context/ToastContext';
 
 // Color Palette from Design Tokens
@@ -62,18 +53,30 @@ const CATEGORY_COLORS = ['#7F011F', '#A3243F', '#5C0116', '#B8860B', '#2A7B88', 
 export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState('events'); // 'events' | 'venues' | 'vendors'
   const [loading, setLoading] = useState(true);
-  const [isUsingFallback, setIsUsingFallback] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const toast = useToast();
 
   // Data states
-  const [stats, setStats] = useState(SEED_STATS);
+  const [stats, setStats] = useState({
+    total_events: 0,
+    upcoming_events: 0,
+    completed_events: 0,
+    total_registrations: 0,
+    total_revenue: 0,
+    total_venues: 0,
+    total_vendors: 0,
+    total_services: 0,
+    avg_rating: null,
+    weekly_registrations: [],
+    category_revenue: [],
+  });
   const [events, setEvents] = useState([]);
   const [venues, setVenues] = useState([]);
   const [vendors, setVendors] = useState([]);
 
   // Events Table States
   const [eventSearch, setEventSearch] = useState('');
-  const [eventSortField, setEventSortField] = useState('date');
+  const [eventSortField, setEventSortField] = useState('start_time');
   const [eventSortAsc, setEventSortAsc] = useState(false);
   const [eventPage, setEventPage] = useState(1);
   const pageSize = 10;
@@ -90,63 +93,49 @@ export default function AdminPanel() {
 
   const loadDashboardData = async () => {
     setLoading(true);
-    let fallbackNeeded = false;
-
-    // 1. Fetch Stats
+    setLoadError('');
     try {
-      const statsData = await adminApi.getStats();
-      if (statsData) {
-        setStats({
-          ...SEED_STATS,
-          ...statsData,
-        });
-      }
-    } catch {
-      fallbackNeeded = true;
-      setStats(SEED_STATS);
+      const [statsData, eventsData, venuesData, vendorsData] = await Promise.all([
+        adminApi.getStats(),
+        adminApi.getEvents(),
+        adminApi.getVenues(),
+        adminApi.getVendors(),
+      ]);
+      setStats((prev) => ({ ...prev, ...statsData }));
+      // Rows come straight from the database; only add display helpers here.
+      setEvents(
+        (eventsData || []).map((e) => ({
+          ...e,
+          category: e.category_name || 'Uncategorized',
+          venue: e.venue_name || 'No venue',
+          city: e.venue_city || '',
+          tickets_sold: Number(e.tickets_sold) || 0,
+          revenue: Number(e.revenue) || 0,
+          capacity: Number(e.capacity) || 0,
+        }))
+      );
+      setVenues(
+        (venuesData || []).map((v) => ({
+          ...v,
+          capacity: Number(v.capacity) || 0,
+          price_per_hour: Number(v.price_per_hour) || 0,
+          events_hosted: Number(v.events_hosted) || 0,
+          total_bookings: Number(v.total_bookings) || 0,
+          revenue_generated: Number(v.revenue_generated) || 0,
+        }))
+      );
+      setVendors(
+        (vendorsData || []).map((v) => ({
+          ...v,
+          events_served: Number(v.events_served) || 0,
+          total_agreed_cost: Number(v.total_agreed_cost) || 0,
+        }))
+      );
+    } catch (err) {
+      setLoadError(err.message || 'Could not load analytics.');
+    } finally {
+      setLoading(false);
     }
-
-    // 2. Fetch Events
-    try {
-      const eventsData = await adminApi.getEvents();
-      if (Array.isArray(eventsData) && eventsData.length > 0) {
-        setEvents(eventsData);
-      } else {
-        setEvents(getStoredEvents());
-      }
-    } catch {
-      fallbackNeeded = true;
-      setEvents(getStoredEvents());
-    }
-
-    // 3. Fetch Venues
-    try {
-      const venuesData = await adminApi.getVenues();
-      if (Array.isArray(venuesData) && venuesData.length > 0) {
-        setVenues(venuesData);
-      } else {
-        setVenues(getStoredVenues());
-      }
-    } catch {
-      fallbackNeeded = true;
-      setVenues(getStoredVenues());
-    }
-
-    // 4. Fetch Vendors
-    try {
-      const vendorsData = await adminApi.getVendors();
-      if (Array.isArray(vendorsData) && vendorsData.length > 0) {
-        setVendors(vendorsData);
-      } else {
-        setVendors(getStoredVendors());
-      }
-    } catch {
-      fallbackNeeded = true;
-      setVendors(getStoredVendors());
-    }
-
-    setIsUsingFallback(fallbackNeeded);
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -163,7 +152,7 @@ export default function AdminPanel() {
       list = list.filter(
         (e) =>
           e.title?.toLowerCase().includes(q) ||
-          e.organizer?.toLowerCase().includes(q) ||
+          e.city?.toLowerCase().includes(q) ||
           e.venue?.toLowerCase().includes(q) ||
           e.category?.toLowerCase().includes(q)
       );
@@ -244,9 +233,9 @@ export default function AdminPanel() {
       const q = vendorSearch.toLowerCase();
       list = list.filter(
         (v) =>
-          v.name?.toLowerCase().includes(q) ||
-          v.service_type?.toLowerCase().includes(q) ||
-          v.city?.toLowerCase().includes(q)
+          v.vendor_name?.toLowerCase().includes(q) ||
+          v.service_name?.toLowerCase().includes(q) ||
+          v.email?.toLowerCase().includes(q)
       );
     }
     list.sort((a, b) => {
@@ -274,7 +263,7 @@ export default function AdminPanel() {
   const vendorTypeChartData = useMemo(() => {
     const counts = {};
     vendors.forEach((v) => {
-      counts[v.service_type] = (counts[v.service_type] || 0) + 1;
+      counts[v.service_name] = (counts[v.service_name] || 0) + 1;
     });
     return Object.entries(counts).map(([service_type, count]) => ({
       service_type,
@@ -313,15 +302,14 @@ export default function AdminPanel() {
         </div>
       </div>
 
-      {/* Fallback Notice Banner if API not reachable */}
-      {isUsingFallback && (
-        <div className="mb-8 p-4 rounded-xl bg-sand border border-sand-dark flex items-start gap-3 shadow-sm">
-          <AlertCircle className="w-5 h-5 text-wine flex-shrink-0 mt-0.5" />
+      {loadError && (
+        <div className="mb-8 p-4 rounded-xl bg-red-50 border border-red-300 flex items-start gap-3 shadow-sm">
+          <AlertCircle className="w-5 h-5 text-red-700 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-ink/80">
-            <strong className="text-wine font-semibold block mb-0.5">
-              Demonstration Mode (DBMS Seed Data)
+            <strong className="text-red-700 font-semibold block mb-0.5">
+              Could not load analytics from the database
             </strong>
-            Backend server at {import.meta.env.VITE_API_URL || 'http://localhost:8000'} is offline or unreachable. Displaying local normalized DBMS schema models and aggregate metrics.
+            {loadError}
           </div>
         </div>
       )}
@@ -361,7 +349,7 @@ export default function AdminPanel() {
               {Number(stats.total_registrations).toLocaleString('en-IN')}
             </div>
             <div className="text-[10px] text-emerald-700 font-semibold mt-1">
-              +14% vs last month
+              Tickets in non-cancelled bookings
             </div>
           </div>
         </div>
@@ -415,7 +403,7 @@ export default function AdminPanel() {
               {stats.total_vendors}
             </div>
             <div className="text-[10px] text-ink/70 font-semibold mt-1">
-              <span className="text-emerald-700 font-bold">{stats.active_vendors} Active</span> • {stats.inactive_vendors} Idle
+              <span className="text-emerald-700 font-bold">{stats.total_services}</span> service types
             </div>
           </div>
         </div>
@@ -430,7 +418,7 @@ export default function AdminPanel() {
           </div>
           <div>
             <div className="font-heading text-2xl sm:text-3xl text-ink flex items-center gap-1.5">
-              <span>{stats.avg_rating}</span>
+              <span>{stats.avg_rating != null ? stats.avg_rating : '—'}</span>
               <span className="text-xs text-ink/60 font-sans font-normal">/ 5.0</span>
             </div>
             <div className="text-[10px] text-amber-800 font-semibold mt-1">
@@ -511,7 +499,7 @@ export default function AdminPanel() {
                   <LineChart data={stats.weekly_registrations} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={COLORS.sandDark} />
                     <XAxis
-                      dataKey="week"
+                      dataKey="label"
                       stroke={COLORS.ink}
                       fontSize={11}
                       tickLine={false}
@@ -638,7 +626,7 @@ export default function AdminPanel() {
                   All Events Ledger
                 </h3>
                 <p className="text-xs text-ink/70">
-                  Comprehensive master table displaying organizers, capacity saturation, and revenue.
+                  All rows in the events table with category, venue, tickets sold and revenue.
                 </p>
               </div>
 
@@ -652,7 +640,7 @@ export default function AdminPanel() {
                     setEventSearch(e.target.value);
                     setEventPage(1);
                   }}
-                  placeholder="Search events, organizer, venue..."
+                  placeholder="Search events, venue, city..."
                   className="w-full pl-10 pr-4 py-2 bg-sand-dark/40 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine"
                 />
               </div>
@@ -674,10 +662,10 @@ export default function AdminPanel() {
                     </th>
                     <th
                       className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors"
-                      onClick={() => handleEventSort('organizer')}
+                      onClick={() => handleEventSort('ticket_price')}
                     >
                       <div className="flex items-center gap-1.5">
-                        <span>Organizer</span>
+                        <span>Ticket Price</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
                     </th>
@@ -692,10 +680,10 @@ export default function AdminPanel() {
                     </th>
                     <th
                       className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors"
-                      onClick={() => handleEventSort('date')}
+                      onClick={() => handleEventSort('start_time')}
                     >
                       <div className="flex items-center gap-1.5">
-                        <span>Date</span>
+                        <span>Date & Time</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
                     </th>
@@ -746,15 +734,21 @@ export default function AdminPanel() {
                               {ev.category}
                             </span>
                           </td>
-                          <td className="p-3.5 text-ink/90 font-semibold truncate max-w-[130px]">
-                            {ev.organizer}
+                          <td className="p-3.5 text-ink/90 font-semibold whitespace-nowrap">
+                            {formatINR(ev.ticket_price)}
                           </td>
                           <td className="p-3.5 text-ink/80 truncate max-w-[150px]">
                             <span className="block truncate">{ev.venue}</span>
                             <span className="text-[10px] text-ink/60">{ev.city}</span>
                           </td>
                           <td className="p-3.5 text-ink/80 whitespace-nowrap">
-                            {ev.date?.split(' ')[0] || ev.date}
+                            {ev.start_time
+                              ? new Date(ev.start_time).toLocaleDateString('en-IN', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                })
+                              : 'TBD'}
                           </td>
                           <td className="p-3.5 text-ink/90">
                             <strong>{ev.tickets_sold}</strong> / {ev.capacity}
@@ -778,9 +772,9 @@ export default function AdminPanel() {
                           <td className="p-3.5 text-center">
                             <span
                               className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-heading uppercase tracking-wider ${
-                                ev.status === 'Scheduled'
+                                ev.status === 'published'
                                   ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                  : ev.status === 'Completed'
+                                  : ev.status === 'completed' || ev.status === 'draft'
                                   ? 'bg-sand-dark/70 text-ink/80 border border-sand-dark'
                                   : 'bg-red-100 text-red-800 border border-red-300'
                               }`}
@@ -794,7 +788,7 @@ export default function AdminPanel() {
                   ) : (
                     <tr>
                       <td colSpan={8} className="p-8 text-center text-ink/60">
-                        No events found matching your search.
+                        {events.length === 0 ? 'No events in the database yet.' : 'No events found matching your search.'}
                       </td>
                     </tr>
                   )}
@@ -889,7 +883,7 @@ export default function AdminPanel() {
                               Events Hosted: <strong>{data.events_hosted}</strong>
                             </p>
                             <p className="text-sand/80 text-[10px]">
-                              Total Bookings: {data.total_bookings} • Utilisation: {data.utilisation_pct}%
+                              Total Bookings: {data.total_bookings} • {data.is_active ? 'Active' : 'Inactive'}
                             </p>
                           </div>
                         );
@@ -988,10 +982,10 @@ export default function AdminPanel() {
                     </th>
                     <th
                       className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors text-center"
-                      onClick={() => handleVenueSort('utilisation_pct')}
+                      onClick={() => handleVenueSort('is_active')}
                     >
                       <div className="flex items-center justify-center gap-1.5">
-                        <span>Utilisation %</span>
+                        <span>Status</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
                     </th>
@@ -1029,8 +1023,14 @@ export default function AdminPanel() {
                           {Number(v.total_bookings).toLocaleString()}
                         </td>
                         <td className="p-3.5 text-center">
-                          <span className="inline-block px-2.5 py-1 rounded-full text-xs font-heading bg-sand-dark text-ink font-bold">
-                            {v.utilisation_pct}%
+                          <span
+                            className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-heading uppercase tracking-wider font-bold ${
+                              v.is_active
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : 'bg-red-100 text-red-800 border border-red-300'
+                            }`}
+                          >
+                            {v.is_active ? 'Active' : 'Inactive'}
                           </span>
                         </td>
                         <td className="p-3.5 text-right font-heading text-wine text-sm whitespace-nowrap">
@@ -1041,7 +1041,7 @@ export default function AdminPanel() {
                   ) : (
                     <tr>
                       <td colSpan={8} className="p-8 text-center text-ink/60">
-                        No venues match your search query.
+                        {venues.length === 0 ? 'No venues in the database yet.' : 'No venues match your search query.'}
                       </td>
                     </tr>
                   )}
@@ -1068,7 +1068,7 @@ export default function AdminPanel() {
                 Vendors by Service Type
               </h3>
               <p className="text-xs text-ink/70">
-                Distribution of verified partners across catering, audio-visual, staging, and security.
+                How many vendors offer each service, from the services table.
               </p>
             </div>
 
@@ -1134,7 +1134,7 @@ export default function AdminPanel() {
                   type="text"
                   value={vendorSearch}
                   onChange={(e) => setVendorSearch(e.target.value)}
-                  placeholder="Search vendor name, service, city..."
+                  placeholder="Search vendor name, service, email..."
                   className="w-full pl-10 pr-4 py-2 bg-sand-dark/40 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine"
                 />
               </div>
@@ -1146,7 +1146,7 @@ export default function AdminPanel() {
                   <tr className="bg-sand-dark/60 text-wine border-b border-sand-dark font-heading uppercase tracking-wider text-[11px]">
                     <th
                       className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors"
-                      onClick={() => handleVendorSort('name')}
+                      onClick={() => handleVendorSort('vendor_name')}
                     >
                       <div className="flex items-center gap-1.5">
                         <span>Vendor Name</span>
@@ -1155,13 +1155,14 @@ export default function AdminPanel() {
                     </th>
                     <th
                       className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors"
-                      onClick={() => handleVendorSort('service_type')}
+                      onClick={() => handleVendorSort('service_name')}
                     >
                       <div className="flex items-center gap-1.5">
-                        <span>Service Type</span>
+                        <span>Service</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
                     </th>
+                    <th className="p-3.5">Contact</th>
                     <th
                       className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors text-center"
                       onClick={() => handleVendorSort('events_served')}
@@ -1172,60 +1173,47 @@ export default function AdminPanel() {
                       </div>
                     </th>
                     <th
-                      className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors text-center"
-                      onClick={() => handleVendorSort('rating')}
+                      className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors text-right"
+                      onClick={() => handleVendorSort('total_agreed_cost')}
                     >
-                      <div className="flex items-center justify-center gap-1.5">
-                        <span>Rating</span>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span>Agreed Cost</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
                     </th>
-                    <th className="p-3.5 text-center">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-sand-dark/60 font-medium">
                   {filteredVendors.length > 0 ? (
                     filteredVendors.map((vnd) => (
                       <tr key={vnd.vendor_id} className="hover:bg-sand-dark/25 transition-colors">
-                        <td className="p-3.5">
-                          <span className="font-heading text-ink text-sm block">
-                            {vnd.name}
-                          </span>
-                          <span className="text-[10px] text-ink/60">
-                            {vnd.city} • {vnd.phone}
-                          </span>
+                        <td className="p-3.5 max-w-xs">
+                          <span className="font-heading text-ink text-sm block">{vnd.vendor_name}</span>
+                          {vnd.service_description && (
+                            <span className="text-[10px] text-ink/60 line-clamp-1">{vnd.service_description}</span>
+                          )}
                         </td>
                         <td className="p-3.5">
                           <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-heading uppercase tracking-wider bg-sand-dark text-wine">
-                            {vnd.service_type}
+                            {vnd.service_name}
                           </span>
+                        </td>
+                        <td className="p-3.5 text-ink/80 whitespace-nowrap">
+                          <span className="block">{vnd.phone || '—'}</span>
+                          <span className="text-[10px] text-ink/60">{vnd.email || ''}</span>
                         </td>
                         <td className="p-3.5 text-center font-bold text-ink text-sm">
-                          {vnd.events_served || 0}
+                          {vnd.events_served}
                         </td>
-                        <td className="p-3.5 text-center">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 font-bold text-xs border border-amber-300">
-                            <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
-                            {vnd.rating}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-center">
-                          <span
-                            className={`inline-block px-3 py-1 rounded-full text-[10px] font-heading uppercase tracking-wider font-bold ${
-                              vnd.status === 'Active'
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                : 'bg-red-100 text-red-800 border border-red-300'
-                            }`}
-                          >
-                            {vnd.status}
-                          </span>
+                        <td className="p-3.5 text-right font-heading text-wine whitespace-nowrap">
+                          {formatINR(vnd.total_agreed_cost)}
                         </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
                       <td colSpan={5} className="p-8 text-center text-ink/60">
-                        No vendors match your search.
+                        {vendors.length === 0 ? 'No vendors in the database yet.' : 'No vendors match your search.'}
                       </td>
                     </tr>
                   )}
