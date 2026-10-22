@@ -1417,3 +1417,16 @@ def list_categories():
             return [dict(r) for r in rows]
     except Exception as e:
         _db_error("Could not load categories", e)
+
+
+# --------------------------------------------------------------------------
+# Services Endpoint
+# --------------------------------------------------------------------------
+@app.get("/api/services")
+def list_services():
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT service_id, service_name FROM services ORDER BY service_name;")).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not load services", e)
