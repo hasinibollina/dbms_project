@@ -2,7 +2,7 @@
 
 Provides endpoints for Admin Analytics, Venues, Vendors, and Events.
 Uses SQL queries with JOIN, GROUP BY, and aggregate functions.
-Gracefully falls back to local seed data if database is unreachable.
+Database errors are returned to the client (no sample-data fallback).
 """
 
 from fastapi import FastAPI, HTTPException, Depends, Query, status
@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 import logging
 
 try:
@@ -33,6 +34,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def _db_error(context: str, exc: Exception):
+    logger.error(f"{context}: {exc}")
+    raise HTTPException(status_code=503, detail=f"{context}. Check the backend terminal for details.")
 
 # --------------------------------------------------------------------------
 # Fallback In-Memory Seed Data (used when remote database is offline)
