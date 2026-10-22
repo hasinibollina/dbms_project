@@ -23,76 +23,6 @@ import { computeIsOpen } from '../utils/hoursUtils';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
-// Local DBMS fallback venues for when backend is offline
-const FALLBACK_VENUES_MAP = {
-  1: {
-    venue_id: 1,
-    name: 'Apex Convention Center',
-    address: '100 Silicon Boulevard',
-    city: 'Bengaluru',
-    capacity: 1500,
-    price_per_hour: 5000.0,
-    contact_phone: '+91 8023456789',
-    description:
-      'State-of-the-art auditorium with high-speed fiber internet, acoustic design, automated lighting truss, and backstage green rooms. Perfect for multi-track tech conferences, keynotes, and product launches.',
-    image_url: 'https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=1600&q=80',
-    is_active: true,
-    hours: [
-      { day_of_week: 0, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 1, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 2, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 3, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 4, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 5, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 6, open_time: null, close_time: null, is_closed: true },
-    ],
-  },
-  2: {
-    venue_id: 2,
-    name: 'Symphony Amphitheatre',
-    address: '45 Green Meadows Road',
-    city: 'Hyderabad',
-    capacity: 800,
-    price_per_hour: 3500.0,
-    contact_phone: '+91 4023456780',
-    description:
-      'Open air amphitheatre surrounded by lush gardens, tiered stone seating, and an acoustic shell. Ideal for live concerts, drama, comedy nights, and community gatherings under the stars.',
-    image_url: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=1600&q=80',
-    is_active: true,
-    hours: [
-      { day_of_week: 0, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 1, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 2, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 3, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 4, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 5, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 6, open_time: null, close_time: null, is_closed: true },
-    ],
-  },
-  3: {
-    venue_id: 3,
-    name: 'Innovate Cowork & Hall',
-    address: '12 MG Road',
-    city: 'Mumbai',
-    capacity: 250,
-    price_per_hour: 1500.0,
-    contact_phone: '+91 2223456781',
-    description:
-      'Modern modular event space with AV projectors, podcast studio booth, catering kitchenette, and flexible breakout rooms. Fits startup pitch events, hackathons, and executive roundtables.',
-    image_url: 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?auto=format&fit=crop&w=1600&q=80',
-    is_active: true,
-    hours: [
-      { day_of_week: 0, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 1, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 2, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 3, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 4, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 5, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 6, open_time: null, close_time: null, is_closed: true },
-    ],
-  },
-};
-
 export default function VenueDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -102,7 +32,6 @@ export default function VenueDetail() {
   const [venue, setVenue] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [isUsingFallback, setIsUsingFallback] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -112,20 +41,10 @@ export default function VenueDetail() {
       setError(null);
       try {
         const data = await venuesApi.getById(id);
-        if (isMounted) {
-          setVenue(data);
-          setIsUsingFallback(false);
-        }
+        if (isMounted) setVenue(data);
       } catch (err) {
-        console.warn(`Venue #${id} fetch failed, checking seed fallback:`, err.message);
         if (isMounted) {
-          const fallback = FALLBACK_VENUES_MAP[id] || FALLBACK_VENUES_MAP[1];
-          if (fallback) {
-            setVenue({ ...fallback, venue_id: Number(id) });
-            setIsUsingFallback(true);
-          } else {
-            setError(`Venue #${id} not found.`);
-          }
+          setError(err.status === 404 ? `Venue #${id} does not exist.` : err.message);
         }
       } finally {
         if (isMounted) setLoading(false);
@@ -217,16 +136,6 @@ export default function VenueDetail() {
           </Link>
         )}
       </div>
-
-      {/* Fallback Banner if using demo seed */}
-      {isUsingFallback && (
-        <div className="p-3.5 rounded-xl bg-sand border border-sand-dark flex items-center gap-3 text-xs text-ink/80 shadow-sm">
-          <AlertCircle className="w-4 h-4 text-wine flex-shrink-0" />
-          <span>
-            Demonstration mode: Loaded offline seed venue record from local DBMS schema.
-          </span>
-        </div>
-      )}
 
       {/* Hero Media Card with Poster Badge */}
       <div className="relative rounded-2xl overflow-hidden border border-sand-dark bg-sand-dark shadow-poster h-72 sm:h-96 md:h-[420px]">
