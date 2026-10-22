@@ -86,10 +86,15 @@ export const venuesApi = {
     return { ...venue, hours: hours || [] };
   },
 
-  create: (venueData) => request('/api/venues', { method: 'POST', body: venueData }),
-  update: (id, venueData) => request(`/api/venues/${id}`, { method: 'PUT', body: venueData }),
+  // Backend responds with { message, venue }
+  create: async (venueData) => (await request('/api/venues', { method: 'POST', body: venueData })).venue,
+
+  update: async (id, venueData) =>
+    (await request(`/api/venues/${id}`, { method: 'PUT', body: venueData })).venue,
+
   delete: (id) => request(`/api/venues/${id}`, { method: 'DELETE' }),
-    // Saves a 7-day schedule: updates days that already have a row, inserts the rest.
+
+  // Saves a 7-day schedule: updates days that already have a row, inserts the rest.
   updateHours: async (id, hoursArray) => {
     const existing = await request(`/api/venue-hours?venue_id=${id}`);
     const byDay = {};
@@ -110,6 +115,7 @@ export const venuesApi = {
     }
   },
 };
+
 // Categories API (table: categories)
 export const categoriesApi = {
   getAll: () => request('/api/categories'),
@@ -173,9 +179,7 @@ export const adminApi = {
 export const vendorsApi = {
   getAll: (params = {}) => {
     const searchParams = new URLSearchParams();
-    if (params.service_type) searchParams.set('service_type', params.service_type);
-    if (params.city) searchParams.set('city', params.city);
-    if (params.status) searchParams.set('status', params.status);
+    if (params.service_id) searchParams.set('service_id', params.service_id);
     if (params.q) searchParams.set('q', params.q);
     const query = searchParams.toString();
     return request(`/api/vendors${query ? `?${query}` : ''}`);
