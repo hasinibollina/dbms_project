@@ -17,7 +17,7 @@ import {
   Power,
   PowerOff,
 } from 'lucide-react';
-import { vendorsApi } from '../api';
+import { vendorsApi, servicesApi } from '../api';
 import {
   SEED_VENDORS,
   formatINR,
