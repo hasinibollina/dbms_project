@@ -66,7 +66,19 @@ export default function AdminPanel() {
   const toast = useToast();
 
   // Data states
-  const [stats, setStats] = useState(SEED_STATS);
+  const [stats, setStats] = useState({
+    total_events: 0,
+    upcoming_events: 0,
+    completed_events: 0,
+    total_registrations: 0,
+    total_revenue: 0,
+    total_venues: 0,
+    total_vendors: 0,
+    total_services: 0,
+    avg_rating: null,
+    weekly_registrations: [],
+    category_revenue: [],
+  });
   const [events, setEvents] = useState([]);
   const [venues, setVenues] = useState([]);
   const [vendors, setVendors] = useState([]);

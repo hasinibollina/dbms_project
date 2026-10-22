@@ -15,7 +15,7 @@ import { vendorsApi, servicesApi } from '../api';
 import ConfirmModal from '../components/ConfirmModal';
 import { useToast } from '../context/ToastContext';
 
-// Live database columns in the `vendors` table (PostgreSQL member2_tables.sql):
+// Columns in the `vendors` table:
 //   vendor_id, vendor_name, service_id (-> services), service_description, phone, email, created_at
 const EMPTY_FORM = {
   vendor_name: '',
