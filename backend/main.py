@@ -35,6 +35,74 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# --------------------------------------------------------------------------
+# Vendor models (match the live `vendors` table:
+#   vendor_id, vendor_name, service_id -> services, service_description, phone, email, created_at)
+# --------------------------------------------------------------------------
+class VendorCreate(BaseModel):
+    vendor_name: str = Field(min_length=1, max_length=150)
+    service_id: int = Field(gt=0)
+    service_description: Optional[str] = None
+    phone: Optional[str] = Field(default=None, max_length=20)
+    email: Optional[str] = Field(default=None, max_length=150)
+
+
+class VendorUpdate(BaseModel):
+    vendor_name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    service_id: Optional[int] = Field(default=None, gt=0)
+    service_description: Optional[str] = None
+    phone: Optional[str] = Field(default=None, max_length=20)
+    email: Optional[str] = Field(default=None, max_length=150)
+
+
+VENDOR_COLUMNS = """
+    v.vendor_id, v.vendor_name, v.service_id, s.service_name,
+    v.service_description, v.phone, v.email, v.created_at
+"""
+
+
+# --------------------------------------------------------------------------
+# Venue Pydantic Models
+# --------------------------------------------------------------------------
+
+class VenueCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    address: str = Field(min_length=1, max_length=255)
+    city: str = Field(min_length=1, max_length=100)
+    capacity: int = Field(gt=0)
+    price_per_hour: float = Field(ge=0)
+    contact_phone: str | None = Field(default=None, max_length=20)
+    description: str | None = None
+    image_url: str | None = Field(default=None, max_length=500)
+
+
+class VenueUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    address: str | None = Field(default=None, min_length=1, max_length=255)
+    city: str | None = Field(default=None, min_length=1, max_length=100)
+    capacity: int | None = Field(default=None, gt=0)
+    price_per_hour: float | None = Field(default=None, ge=0)
+    contact_phone: str | None = Field(default=None, max_length=20)
+    description: str | None = None
+    image_url: str | None = Field(default=None, max_length=500)
+    is_active: bool | None = None
+
+
+class OperatingHoursCreate(BaseModel):
+    day_of_week: int = Field(ge=0, le=6)
+    open_time: str | None = None
+    close_time: str | None = None
+    is_closed: bool = False
+
+
+class OperatingHoursUpdate(BaseModel):
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    open_time: str | None = None
+    close_time: str | None = None
+    is_closed: bool | None = None
+
+
 def _db_error(context: str, exc: Exception):
     logger.error(f"{context}: {exc}")
     raise HTTPException(status_code=503, detail=f"{context}. Check the backend terminal for details.")
