@@ -96,27 +96,11 @@ export default function Venues() {
     setLoading(true);
     setFetchError(null);
     try {
-      const data = await venuesApi.getAll({
-        city: filters.city,
-        min_capacity: filters.min_capacity,
-        q: filters.q,
-      });
-
-      if (Array.isArray(data)) {
-        setVenues(data);
-        setIsUsingFallback(false);
-      } else if (data?.venues && Array.isArray(data.venues)) {
-        setVenues(data.venues);
-        setIsUsingFallback(false);
-      } else {
-        throw new Error('Invalid venue data format from backend');
-      }
+      const data = await venuesApi.getAll();
+      setVenues(Array.isArray(data) ? data : []);
     } catch (err) {
-      // Graceful fallback to mock data if backend not active
-      console.warn('Backend API unavailable. Falling back to local DBMS seed venues:', err.message);
-      setIsUsingFallback(true);
-      setFetchError(err.message);
-      setVenues(FALLBACK_VENUES);
+      setVenues([]);
+      setFetchError(err.message || 'Could not load venues.');
     } finally {
       setLoading(false);
     }
