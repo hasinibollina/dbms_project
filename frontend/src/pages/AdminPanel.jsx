@@ -73,7 +73,7 @@ export default function AdminPanel() {
 
   // Events Table States
   const [eventSearch, setEventSearch] = useState('');
-  const [eventSortField, setEventSortField] = useState('date');
+  const [eventSortField, setEventSortField] = useState('start_time');
   const [eventSortAsc, setEventSortAsc] = useState(false);
   const [eventPage, setEventPage] = useState(1);
   const pageSize = 10;
@@ -692,10 +692,10 @@ export default function AdminPanel() {
                     </th>
                     <th
                       className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors"
-                      onClick={() => handleEventSort('date')}
+                      onClick={() => handleEventSort('start_time')}
                     >
                       <div className="flex items-center gap-1.5">
-                        <span>Date</span>
+                        <span>Date & Time</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
                     </th>
@@ -754,7 +754,13 @@ export default function AdminPanel() {
                             <span className="text-[10px] text-ink/60">{ev.city}</span>
                           </td>
                           <td className="p-3.5 text-ink/80 whitespace-nowrap">
-                            {ev.date?.split(' ')[0] || ev.date}
+                            {ev.start_time
+                              ? new Date(ev.start_time).toLocaleDateString('en-IN', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                })
+                              : ev.date || 'TBD'}
                           </td>
                           <td className="p-3.5 text-ink/90">
                             <strong>{ev.tickets_sold}</strong> / {ev.capacity}
@@ -1163,6 +1169,15 @@ export default function AdminPanel() {
                       </div>
                     </th>
                     <th
+                      className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors"
+                      onClick={() => handleVendorSort('price_min')}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Price Range</span>
+                        <ArrowUpDown className="w-3 h-3" />
+                      </div>
+                    </th>
+                    <th
                       className="p-3.5 cursor-pointer hover:bg-sand-dark/80 transition-colors text-center"
                       onClick={() => handleVendorSort('events_served')}
                     >
@@ -1200,6 +1215,11 @@ export default function AdminPanel() {
                             {vnd.service_type}
                           </span>
                         </td>
+                        <td className="p-3.5 font-semibold text-ink whitespace-nowrap">
+                          {vnd.price_min != null && vnd.price_max != null
+                            ? `${formatINR(vnd.price_min)} - ${formatINR(vnd.price_max)}`
+                            : 'N/A'}
+                        </td>
                         <td className="p-3.5 text-center font-bold text-ink text-sm">
                           {vnd.events_served || 0}
                         </td>
@@ -1224,7 +1244,7 @@ export default function AdminPanel() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="p-8 text-center text-ink/60">
+                      <td colSpan={6} className="p-8 text-center text-ink/60">
                         No vendors match your search.
                       </td>
                     </tr>

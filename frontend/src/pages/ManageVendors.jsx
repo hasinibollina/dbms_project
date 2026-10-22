@@ -61,7 +61,6 @@ export default function ManageVendors() {
     price_max: '90000',
     rating: '4.8',
     status: 'Active',
-    description: '',
   });
   const [formErrors, setFormErrors] = useState({});
 
@@ -108,8 +107,8 @@ export default function ManageVendors() {
         const q = searchQuery.toLowerCase();
         const matchName = vnd.name?.toLowerCase().includes(q);
         const matchPhone = vnd.phone?.toLowerCase().includes(q);
-        const matchDesc = vnd.description?.toLowerCase().includes(q);
-        if (!matchName && !matchPhone && !matchDesc) return false;
+        const matchCity = vnd.city?.toLowerCase().includes(q);
+        if (!matchName && !matchPhone && !matchCity) return false;
       }
       return true;
     });
@@ -127,7 +126,6 @@ export default function ManageVendors() {
       price_max: '100000',
       rating: '4.8',
       status: 'Active',
-      description: '',
     });
     setFormErrors({});
     setModalOpen(true);
@@ -145,7 +143,6 @@ export default function ManageVendors() {
       price_max: String(vnd.price_max || 0),
       rating: String(vnd.rating || 4.5),
       status: vnd.status || 'Active',
-      description: vnd.description || '',
     });
     setFormErrors({});
     setModalOpen(true);
@@ -154,11 +151,18 @@ export default function ManageVendors() {
   const validateForm = () => {
     const errs = {};
     if (!formData.name.trim()) errs.name = 'Vendor name is required';
+    if (formData.name.trim().length > 150) errs.name = 'Vendor name cannot exceed 150 characters';
     if (!formData.city.trim()) errs.city = 'City is required';
+    if (formData.city.trim().length > 80) errs.city = 'City cannot exceed 80 characters';
     if (!formData.phone.trim()) errs.phone = 'Phone number is required';
+    if (formData.phone.trim().length > 20) errs.phone = 'Phone number cannot exceed 20 characters';
     if (Number(formData.price_min) < 0) errs.price_min = 'Min price cannot be negative';
     if (Number(formData.price_max) < Number(formData.price_min)) {
       errs.price_max = 'Max price must be greater than or equal to Min price';
+    }
+    const r = Number(formData.rating);
+    if (isNaN(r) || r < 1 || r > 5) {
+      errs.rating = 'Rating must be between 1 and 5';
     }
     setFormErrors(errs);
     return Object.keys(errs).length === 0;
@@ -177,7 +181,6 @@ export default function ManageVendors() {
       price_max: Number(formData.price_max),
       rating: Number(formData.rating),
       status: formData.status,
-      description: formData.description.trim(),
     };
 
     if (editingVendor) {
@@ -380,11 +383,6 @@ export default function ManageVendors() {
                       <span className="font-heading text-ink text-sm block">
                         {vnd.name}
                       </span>
-                      {vnd.description && (
-                        <p className="text-[11px] text-ink/70 line-clamp-1 mt-0.5 max-w-xs">
-                          {vnd.description}
-                        </p>
-                      )}
                     </td>
 
                     {/* Service Type */}
@@ -530,6 +528,7 @@ export default function ManageVendors() {
                 <input
                   type="text"
                   required
+                  maxLength={150}
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="e.g. Royal Rasoi Caterers"
@@ -564,6 +563,7 @@ export default function ManageVendors() {
                   <input
                     type="text"
                     required
+                    maxLength={80}
                     value={formData.city}
                     onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                     placeholder="e.g. Bengaluru"
@@ -582,6 +582,7 @@ export default function ManageVendors() {
                   <input
                     type="text"
                     required
+                    maxLength={20}
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     placeholder="+91 9845012345"
@@ -614,6 +615,7 @@ export default function ManageVendors() {
                   <input
                     type="number"
                     min="0"
+                    step="0.01"
                     value={formData.price_min}
                     onChange={(e) => setFormData({ ...formData, price_min: e.target.value })}
                     className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
@@ -630,6 +632,7 @@ export default function ManageVendors() {
                   <input
                     type="number"
                     min="0"
+                    step="0.01"
                     value={formData.price_max}
                     onChange={(e) => setFormData({ ...formData, price_max: e.target.value })}
                     className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
@@ -655,19 +658,7 @@ export default function ManageVendors() {
                 </div>
               </div>
 
-              {/* Description */}
-              <div className="space-y-1">
-                <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                  Service Description
-                </label>
-                <textarea
-                  rows={3}
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Detail menu offerings, equipment specifications, staging trussing..."
-                  className="w-full px-3.5 py-2 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine"
-                />
-              </div>
+
 
               {/* Submit Buttons */}
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-sand-dark">
