@@ -52,16 +52,14 @@ export default function ManageVendors() {
   // Modal for Add / Edit
   const [modalOpen, setModalOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState(null); // null = Add, object = Edit
-  const [formData, setFormData] = useState({
-    name: '',
-    service_type: 'Catering',
-    city: 'Bengaluru',
+  const EMPTY_FORM = {
+    vendor_name: '',
+    service_id: '',
+    service_description: '',
     phone: '',
-    price_min: '30000',
-    price_max: '90000',
-    rating: '4.8',
-    status: 'Active',
-  });
+    email: '',
+  };
+  const [formData, setFormData] = useState(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState({});
 
   // Deletion / Deactivation modal
