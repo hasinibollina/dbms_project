@@ -1254,3 +1254,207 @@ def list_services():
             return [dict(r) for r in rows]
     except Exception as e:
         _db_error("Could not load services", e)
+
+
+@app.get("/api/venue-hours")
+def list_venue_hours(venue_id: Optional[int] = Query(None)):
+    """Operating hours for all venues, or for one venue with ?venue_id=."""
+    try:
+        with engine.connect() as conn:
+            sql = """SELECT hours_id, venue_id, day_of_week, open_time, close_time, is_closed
+                     FROM venueoperatinghours"""
+            params = {}
+            if venue_id is not None:
+                sql += " WHERE venue_id = :venue_id"
+                params["venue_id"] = venue_id
+            rows = conn.execute(text(sql + " ORDER BY venue_id, day_of_week;"), params).mappings().all()
+            return [
+                {**dict(r),
+                 "open_time": r["open_time"].strftime("%H:%M:%S") if r["open_time"] else None,
+                 "close_time": r["close_time"].strftime("%H:%M:%S") if r["close_time"] else None}
+                for r in rows
+            ]
+    except Exception as e:
+        _db_error("Could not load operating hours", e)
+
+
+# --------------------------------------------------------------------------
+
+
+# Venue Operating Hours
+# --------------------------------------------------------------------------
+
+# POST: Add operating hours for a venue
+@app.post(
+    "/api/venues/{venue_id}/operating-hours",
+    status_code=status.HTTP_201_CREATED
+)
+def create_operating_hours(
+    venue_id: int,
+    hours: OperatingHoursCreate
+):
+    """Add operating hours for a venue."""
+
+    try:
+        with engine.begin() as conn:
+
+            # Check that the venue exists
+            venue_exists = conn.execute(text("""
+                SELECT venue_id
+                FROM venues
+                WHERE venue_id = :venue_id;
+            """), {
+                "venue_id": venue_id
+            }).scalar_one_or_none()
+
+            if venue_exists is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Venue not found."
+                )
+
+            q = text("""
+                INSERT INTO venueoperatinghours
+                (
+                    venue_id,
+                    day_of_week,
+                    open_time,
+                    close_time,
+                    is_closed
+                )
+                VALUES
+                (
+                    :venue_id,
+                    :day_of_week,
+                    :open_time,
+                    :close_time,
+                    :is_closed
+                )
+                RETURNING
+                    hours_id,
+                    venue_id,
+                    day_of_week,
+                    open_time,
+                    close_time,
+                    is_closed;
+            """)
+
+            row = conn.execute(
+                q,
+                {
+                    "venue_id": venue_id,
+                    "day_of_week": hours.day_of_week,
+                    "open_time": hours.open_time,
+                    "close_time": hours.close_time,
+                    "is_closed": hours.is_closed
+                }
+            ).mappings().one()
+
+            return {
+                "message": "Operating hours added successfully",
+                "operating_hours": dict(row)
+            }
+
+    except HTTPException:
+        raise
+
+    except IntegrityError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid operating hours data."
+        )
+
+    except Exception as e:
+        logger.warning(f"DB insert failed: {e}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not add operating hours."
+        )
+
+
+# PUT: Update operating hours
+@app.put("/api/venues/operating-hours/{hours_id}")
+def update_operating_hours(
+    hours_id: int,
+    hours_data: OperatingHoursUpdate
+):
+    """Update existing venue operating hours."""
+
+    changes = hours_data.dict(exclude_unset=True)
+
+    if not changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No fields provided."
+        )
+
+    fields = {
+        "day_of_week",
+        "open_time",
+        "close_time",
+        "is_closed"
+    }
+
+    updates = {
+        key: value
+        for key, value in changes.items()
+        if key in fields
+    }
+
+    assignments = ", ".join(
+        f"{key} = :{key}"
+        for key in updates
+    )
+
+    try:
+        with engine.begin() as conn:
+
+            q = text(f"""
+                UPDATE venueoperatinghours
+                SET {assignments}
+                WHERE hours_id = :hours_id
+                RETURNING
+                    hours_id,
+                    venue_id,
+                    day_of_week,
+                    open_time,
+                    close_time,
+                    is_closed;
+            """)
+
+            row = conn.execute(
+                q,
+                {
+                    **updates,
+                    "hours_id": hours_id
+                }
+            ).mappings().one_or_none()
+
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Operating hours not found."
+                )
+
+            return {
+                "message": "Operating hours updated successfully",
+                "operating_hours": dict(row)
+            }
+
+    except HTTPException:
+        raise
+
+    except IntegrityError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid operating hours data."
+        )
+
+    except Exception as e:
+        logger.warning(f"DB update failed: {e}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not update operating hours."
+        )
