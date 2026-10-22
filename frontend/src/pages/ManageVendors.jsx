@@ -5,81 +5,71 @@ import {
   Edit2,
   Trash2,
   Search,
-  Filter,
-  CheckCircle2,
   AlertCircle,
   X,
   Phone,
-  MapPin,
-  IndianRupee,
-  Star,
+  Mail,
   RefreshCw,
-  Power,
-  PowerOff,
 } from 'lucide-react';
 import { vendorsApi, servicesApi } from '../api';
-import {
-  SEED_VENDORS,
-  formatINR,
-  getStoredVendors,
-  saveStoredVendors,
-} from '../data/seedData';
 import ConfirmModal from '../components/ConfirmModal';
 import { useToast } from '../context/ToastContext';
 
-const SERVICE_TYPES = [
-  'Catering',
-  'Sound & AV',
-  'Stage & Decor',
-  'Photography & Video',
-  'Security & Hospitality',
-];
+// Columns in the `vendors` table:
+//   vendor_id, vendor_name, service_id (-> services), service_description, phone, email, created_at
+const EMPTY_FORM = {
+  vendor_name: '',
+  service_id: '',
+  service_description: '',
+  phone: '',
+  email: '',
+};
 
-const CITIES = ['All', 'Bengaluru', 'Mumbai', 'Hyderabad'];
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function formatDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 export default function ManageVendors() {
   const toast = useToast();
   const [vendors, setVendors] = useState([]);
+  const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isUsingFallback, setIsUsingFallback] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCity, setSelectedCity] = useState('All');
   const [selectedService, setSelectedService] = useState('All');
-  const [selectedStatus, setSelectedStatus] = useState('All');
 
-  // Modal for Add / Edit
+  // Add / Edit modal
   const [modalOpen, setModalOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState(null); // null = Add, object = Edit
-  const EMPTY_FORM = {
-    vendor_name: '',
-    service_id: '',
-    service_description: '',
-    phone: '',
-    email: '',
-  };
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
-  // Deletion / Deactivation modal
+  // Delete modal
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [vendorToDelete, setVendorToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadVendors = async () => {
     setLoading(true);
+    setLoadError('');
     try {
-      const data = await vendorsApi.getAll();
-      if (Array.isArray(data) && data.length > 0) {
-        setVendors(data);
-        setIsUsingFallback(false);
-      } else {
-        throw new Error('Empty vendors data');
-      }
-    } catch {
-      setIsUsingFallback(true);
-      const stored = getStoredVendors();
-      setVendors(stored);
+      const [vendorRows, serviceRows] = await Promise.all([
+        vendorsApi.getAll(),
+        servicesApi.getAll(),
+      ]);
+      setVendors(Array.isArray(vendorRows) ? vendorRows : []);
+      setServices(Array.isArray(serviceRows) ? serviceRows : []);
+    } catch (err) {
+      setVendors([]);
+      setLoadError(err.message || 'Could not load vendors.');
     } finally {
       setLoading(false);
     }
@@ -89,58 +79,36 @@ export default function ManageVendors() {
     loadVendors();
   }, []);
 
-  // Filtered list
   const filteredVendors = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     return vendors.filter((vnd) => {
-      if (selectedCity !== 'All' && vnd.city?.toLowerCase() !== selectedCity.toLowerCase()) {
-        return false;
-      }
-      if (selectedService !== 'All' && vnd.service_type?.toLowerCase() !== selectedService.toLowerCase()) {
-        return false;
-      }
-      if (selectedStatus !== 'All' && vnd.status?.toLowerCase() !== selectedStatus.toLowerCase()) {
-        return false;
-      }
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchName = vnd.name?.toLowerCase().includes(q);
-        const matchPhone = vnd.phone?.toLowerCase().includes(q);
-        const matchCity = vnd.city?.toLowerCase().includes(q);
-        if (!matchName && !matchPhone && !matchCity) return false;
+      if (selectedService !== 'All' && String(vnd.service_id) !== selectedService) return false;
+      if (q) {
+        const haystack = [vnd.vendor_name, vnd.phone, vnd.email, vnd.service_description]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [vendors, selectedCity, selectedService, selectedStatus, searchQuery]);
+  }, [vendors, selectedService, searchQuery]);
 
-  // Open modal for Add
   const handleOpenAdd = () => {
     setEditingVendor(null);
-    setFormData({
-      name: '',
-      service_type: 'Catering',
-      city: 'Bengaluru',
-      phone: '+91 98',
-      price_min: '35000',
-      price_max: '100000',
-      rating: '4.8',
-      status: 'Active',
-    });
+    setFormData({ ...EMPTY_FORM, service_id: services[0] ? String(services[0].service_id) : '' });
     setFormErrors({});
     setModalOpen(true);
   };
 
-  // Open modal for Edit
   const handleOpenEdit = (vnd) => {
     setEditingVendor(vnd);
     setFormData({
-      name: vnd.name || '',
-      service_type: vnd.service_type || 'Catering',
-      city: vnd.city || 'Bengaluru',
+      vendor_name: vnd.vendor_name || '',
+      service_id: vnd.service_id ? String(vnd.service_id) : '',
+      service_description: vnd.service_description || '',
       phone: vnd.phone || '',
-      price_min: String(vnd.price_min || 0),
-      price_max: String(vnd.price_max || 0),
-      rating: String(vnd.rating || 4.5),
-      status: vnd.status || 'Active',
+      email: vnd.email || '',
     });
     setFormErrors({});
     setModalOpen(true);
@@ -148,20 +116,14 @@ export default function ManageVendors() {
 
   const validateForm = () => {
     const errs = {};
-    if (!formData.name.trim()) errs.name = 'Vendor name is required';
-    if (formData.name.trim().length > 150) errs.name = 'Vendor name cannot exceed 150 characters';
-    if (!formData.city.trim()) errs.city = 'City is required';
-    if (formData.city.trim().length > 80) errs.city = 'City cannot exceed 80 characters';
-    if (!formData.phone.trim()) errs.phone = 'Phone number is required';
-    if (formData.phone.trim().length > 20) errs.phone = 'Phone number cannot exceed 20 characters';
-    if (Number(formData.price_min) < 0) errs.price_min = 'Min price cannot be negative';
-    if (Number(formData.price_max) < Number(formData.price_min)) {
-      errs.price_max = 'Max price must be greater than or equal to Min price';
-    }
-    const r = Number(formData.rating);
-    if (isNaN(r) || r < 1 || r > 5) {
-      errs.rating = 'Rating must be between 1 and 5';
-    }
+    const name = formData.vendor_name.trim();
+    if (!name) errs.vendor_name = 'Vendor name is required';
+    else if (name.length > 150) errs.vendor_name = 'Vendor name cannot exceed 150 characters';
+    if (!formData.service_id) errs.service_id = 'Select a service';
+    if (formData.phone.trim().length > 20) errs.phone = 'Phone cannot exceed 20 characters';
+    const email = formData.email.trim();
+    if (email.length > 150) errs.email = 'Email cannot exceed 150 characters';
+    else if (email && !EMAIL_PATTERN.test(email)) errs.email = 'Enter a valid email address';
     setFormErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -171,79 +133,53 @@ export default function ManageVendors() {
     if (!validateForm()) return;
 
     const payload = {
-      name: formData.name.trim(),
-      service_type: formData.service_type,
-      city: formData.city.trim(),
-      phone: formData.phone.trim(),
-      price_min: Number(formData.price_min),
-      price_max: Number(formData.price_max),
-      rating: Number(formData.rating),
-      status: formData.status,
+      vendor_name: formData.vendor_name.trim(),
+      service_id: Number(formData.service_id),
+      service_description: formData.service_description.trim() || null,
+      phone: formData.phone.trim() || null,
+      email: formData.email.trim() || null,
     };
 
-    if (editingVendor) {
-      // Edit
-      try {
-        await vendorsApi.update(editingVendor.vendor_id, payload);
-      } catch (err) {
-        console.warn('Backend update failed, persisting locally:', err.message);
-      }
-      const updated = vendors.map((v) =>
-        v.vendor_id === editingVendor.vendor_id ? { ...v, ...payload } : v
-      );
-      setVendors(updated);
-      saveStoredVendors(updated);
-      toast.success(`Vendor "${payload.name}" updated successfully!`);
-    } else {
-      // Add
-      let newId = Math.max(...vendors.map((v) => v.vendor_id), 0) + 1;
-      try {
-        const resp = await vendorsApi.create(payload);
-        if (resp?.vendor_id) newId = resp.vendor_id;
-      } catch (err) {
-        console.warn('Backend create failed, persisting locally:', err.message);
-      }
-      const newVnd = { ...payload, vendor_id: newId, events_served: 0 };
-      const updated = [newVnd, ...vendors];
-      setVendors(updated);
-      saveStoredVendors(updated);
-      toast.success(`Vendor "${newVnd.name}" added successfully!`);
-    }
-
-    setModalOpen(false);
-  };
-
-  // Toggle Activate / Deactivate
-  const handleToggleStatus = async (vnd) => {
-    const nextStatus = vnd.status === 'Active' ? 'Inactive' : 'Active';
+    setSaving(true);
     try {
-      await vendorsApi.update(vnd.vendor_id, { status: nextStatus });
+      if (editingVendor) {
+        const saved = await vendorsApi.update(editingVendor.vendor_id, payload);
+        setVendors((prev) =>
+          prev.map((v) => (v.vendor_id === saved.vendor_id ? { ...v, ...saved } : v))
+        );
+        toast.success(`Vendor "${saved.vendor_name}" updated.`);
+      } else {
+        const saved = await vendorsApi.create(payload);
+        setVendors((prev) => [{ ...saved, events_served: 0 }, ...prev]);
+        toast.success(`Vendor "${saved.vendor_name}" added.`);
+      }
+      setModalOpen(false);
     } catch (err) {
-      console.warn('Backend toggle failed, saving locally:', err.message);
+      toast.error(`Could not save vendor: ${err.message}`);
+    } finally {
+      setSaving(false);
     }
-    const updated = vendors.map((v) =>
-      v.vendor_id === vnd.vendor_id ? { ...v, status: nextStatus } : v
-    );
-    setVendors(updated);
-    saveStoredVendors(updated);
-    toast.info(`Vendor "${vnd.name}" is now ${nextStatus}.`);
   };
 
-  // Delete vendor
   const confirmDeleteVendor = async () => {
     if (!vendorToDelete) return;
+    setDeleting(true);
     try {
       await vendorsApi.delete(vendorToDelete.vendor_id);
+      setVendors((prev) => prev.filter((v) => v.vendor_id !== vendorToDelete.vendor_id));
+      toast.success(`Vendor "${vendorToDelete.vendor_name}" deleted.`);
+      setDeleteModalOpen(false);
+      setVendorToDelete(null);
     } catch (err) {
-      console.warn('Backend delete failed, removing locally:', err.message);
+      toast.error(`Could not delete vendor: ${err.message}`);
+    } finally {
+      setDeleting(false);
     }
-    const updated = vendors.filter((v) => v.vendor_id !== vendorToDelete.vendor_id);
-    setVendors(updated);
-    saveStoredVendors(updated);
-    toast.info(`Vendor "${vendorToDelete.name}" deleted.`);
-    setDeleteModalOpen(false);
-    setVendorToDelete(null);
   };
+
+  const inputClass =
+    'w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine';
+  const labelClass = 'block text-xs font-heading uppercase tracking-wider text-ink';
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 md:py-14 w-full animate-fadeIn">
@@ -258,7 +194,8 @@ export default function ManageVendors() {
             MANAGE VENDORS
           </h1>
           <p className="text-ink/70 text-sm sm:text-base mt-1 max-w-2xl">
-            Curate vetted vendor partnerships across catering, sound & lighting, decor, and photography.
+            Vendors and the service each one provides, from the <code>vendors</code> and{' '}
+            <code>services</code> tables.
           </p>
         </div>
 
@@ -267,7 +204,8 @@ export default function ManageVendors() {
             type="button"
             id="add-vendor-button"
             onClick={handleOpenAdd}
-            className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-md focus:outline-none focus:ring-2 focus:ring-wine-light"
+            disabled={loading || !!loadError}
+            className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-md focus:outline-none focus:ring-2 focus:ring-wine-light disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4 stroke-[3]" />
             <span>Add Vendor</span>
@@ -284,76 +222,46 @@ export default function ManageVendors() {
         </div>
       </div>
 
-      {/* Fallback Banner */}
-      {isUsingFallback && (
-        <div className="mb-6 p-4 rounded-xl bg-sand border border-sand-dark flex items-start gap-3 shadow-sm">
-          <AlertCircle className="w-5 h-5 text-wine flex-shrink-0 mt-0.5" />
+      {loadError && (
+        <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-300 flex items-start gap-3 shadow-sm">
+          <AlertCircle className="w-5 h-5 text-red-700 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-ink/80">
-            <strong className="text-wine font-semibold block mb-0.5">
-              Demonstration Mode (DBMS Seed Data)
+            <strong className="text-red-700 font-semibold block mb-0.5">
+              Could not load vendors from the database
             </strong>
-            Backend connection ({import.meta.env.VITE_API_URL || 'http://localhost:8000'}) is currently offline. Operating on local normalized vendor records with CRUD persistence.
+            {loadError}
           </div>
         </div>
       )}
 
       {/* Filter and Search Bar */}
-      <div className="bg-sand rounded-2xl border border-sand-dark p-4 mb-6 shadow-sm space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Search Box */}
+      <div className="bg-sand rounded-2xl border border-sand-dark p-4 mb-6 shadow-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="relative">
             <Search className="w-4 h-4 text-wine absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
+              id="vendor-search"
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search vendor name, phone..."
+              placeholder="Search name, phone, email or description..."
               className="w-full pl-10 pr-4 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine"
             />
           </div>
 
-          {/* City Filter */}
-          <div>
-            <select
-              value={selectedCity}
-              onChange={(e) => setSelectedCity(e.target.value)}
-              className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
-            >
-              <option value="All">All Cities</option>
-              <option value="Bengaluru">Bengaluru</option>
-              <option value="Mumbai">Mumbai</option>
-              <option value="Hyderabad">Hyderabad</option>
-            </select>
-          </div>
-
-          {/* Service Type Filter */}
-          <div>
-            <select
-              value={selectedService}
-              onChange={(e) => setSelectedService(e.target.value)}
-              className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
-            >
-              <option value="All">All Service Types</option>
-              {SERVICE_TYPES.map((st) => (
-                <option key={st} value={st}>
-                  {st}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Status Filter */}
-          <div>
-            <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
-            >
-              <option value="All">All Statuses</option>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
-          </div>
+          <select
+            id="vendor-service-filter"
+            value={selectedService}
+            onChange={(e) => setSelectedService(e.target.value)}
+            className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
+          >
+            <option value="All">All Services</option>
+            {services.map((s) => (
+              <option key={s.service_id} value={String(s.service_id)}>
+                {s.service_name}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -363,101 +271,72 @@ export default function ManageVendors() {
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-sand-dark/60 text-wine border-b border-sand-dark font-heading uppercase tracking-wider text-[11px]">
-                <th className="p-4">Vendor Name & Details</th>
-                <th className="p-4">Service Type</th>
-                <th className="p-4">City & Contact</th>
-                <th className="p-4">Price Range</th>
-                <th className="p-4 text-center">Rating</th>
-                <th className="p-4 text-center">Status</th>
+                <th className="p-4">Vendor</th>
+                <th className="p-4">Service</th>
+                <th className="p-4">Contact</th>
+                <th className="p-4 text-center">Events Served</th>
+                <th className="p-4">Added On</th>
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-sand-dark/60 font-medium">
-              {filteredVendors.length > 0 ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="p-10 text-center text-ink/60">
+                    Loading vendors…
+                  </td>
+                </tr>
+              ) : filteredVendors.length > 0 ? (
                 filteredVendors.map((vnd) => (
                   <tr key={vnd.vendor_id} className="hover:bg-sand-dark/25 transition-colors">
-                    {/* Name */}
-                    <td className="p-4">
-                      <span className="font-heading text-ink text-sm block">
-                        {vnd.name}
-                      </span>
+                    <td className="p-4 max-w-xs">
+                      <span className="font-heading text-ink text-sm block">{vnd.vendor_name}</span>
+                      {vnd.service_description && (
+                        <span className="text-[11px] text-ink/60 line-clamp-2">
+                          {vnd.service_description}
+                        </span>
+                      )}
                     </td>
 
-                    {/* Service Type */}
                     <td className="p-4 whitespace-nowrap">
                       <span className="inline-block px-3 py-1 rounded-full text-[10px] font-heading uppercase tracking-wider bg-sand-dark text-wine">
-                        {vnd.service_type}
+                        {vnd.service_name}
                       </span>
                     </td>
 
-                    {/* City & Phone */}
-                    <td className="p-4 whitespace-nowrap">
-                      <div className="font-semibold text-ink">{vnd.city}</div>
-                      <div className="text-[10px] text-ink/60">{vnd.phone}</div>
+                    <td className="p-4 whitespace-nowrap space-y-0.5">
+                      {vnd.phone ? (
+                        <div className="flex items-center gap-1.5 text-ink">
+                          <Phone className="w-3 h-3 text-wine" />
+                          {vnd.phone}
+                        </div>
+                      ) : null}
+                      {vnd.email ? (
+                        <div className="flex items-center gap-1.5 text-[11px] text-ink/70">
+                          <Mail className="w-3 h-3 text-wine" />
+                          {vnd.email}
+                        </div>
+                      ) : null}
+                      {!vnd.phone && !vnd.email && <span className="text-ink/40">—</span>}
                     </td>
 
-                    {/* Price Range */}
-                    <td className="p-4 font-semibold text-ink whitespace-nowrap">
-                      {formatINR(vnd.price_min)} - {formatINR(vnd.price_max)}
+                    <td className="p-4 text-center font-semibold text-ink tabular-nums">
+                      {vnd.events_served ?? 0}
                     </td>
 
-                    {/* Rating */}
-                    <td className="p-4 text-center whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 font-bold text-xs border border-amber-300">
-                        <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
-                        {vnd.rating}
-                      </span>
-                    </td>
+                    <td className="p-4 whitespace-nowrap text-ink/70">{formatDate(vnd.created_at)}</td>
 
-                    {/* Status */}
-                    <td className="p-4 text-center whitespace-nowrap">
-                      <span
-                        className={`inline-block px-3 py-1 rounded-full text-[10px] font-heading uppercase tracking-wider font-bold ${
-                          vnd.status === 'Active'
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                            : 'bg-red-100 text-red-800 border border-red-300'
-                        }`}
-                      >
-                        {vnd.status}
-                      </span>
-                    </td>
-
-                    {/* Actions: Edit, Deactivate/Activate, Delete */}
                     <td className="p-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           type="button"
                           onClick={() => handleOpenEdit(vnd)}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-sand-dark bg-sand text-ink hover:bg-wine hover:text-sand hover:border-wine text-xs font-semibold transition-all shadow-sm"
-                          title="Edit Vendor"
+                          title="Edit vendor"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                           <span>Edit</span>
                         </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleToggleStatus(vnd)}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all shadow-sm ${
-                            vnd.status === 'Active'
-                              ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-600 hover:text-white'
-                              : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-700 hover:text-white'
-                          }`}
-                          title={vnd.status === 'Active' ? 'Deactivate Vendor' : 'Activate Vendor'}
-                        >
-                          {vnd.status === 'Active' ? (
-                            <>
-                              <PowerOff className="w-3.5 h-3.5" />
-                              <span>Deactivate</span>
-                            </>
-                          ) : (
-                            <>
-                              <Power className="w-3.5 h-3.5" />
-                              <span>Activate</span>
-                            </>
-                          )}
-                        </button>
-
                         <button
                           type="button"
                           onClick={() => {
@@ -465,7 +344,7 @@ export default function ManageVendors() {
                             setDeleteModalOpen(true);
                           }}
                           className="p-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-700 hover:text-white transition-colors"
-                          title="Delete Vendor"
+                          title="Delete vendor"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -475,8 +354,10 @@ export default function ManageVendors() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="p-10 text-center text-ink/60">
-                    No vendors found matching your filter selections.
+                  <td colSpan={6} className="p-10 text-center text-ink/60">
+                    {vendors.length === 0 && !loadError
+                      ? 'No vendors in the database yet. Click "Add Vendor" to create the first one.'
+                      : 'No vendors match your search.'}
                   </td>
                 </tr>
               )}
@@ -485,9 +366,7 @@ export default function ManageVendors() {
         </div>
       </div>
 
-      {/* =========================================================================
-          ADD / EDIT VENDOR MODAL
-          ========================================================================= */}
+      {/* Add / Edit modal */}
       {modalOpen && (
         <div
           role="dialog"
@@ -509,156 +388,99 @@ export default function ManageVendors() {
               </div>
               <div>
                 <h3 className="font-heading text-xl uppercase tracking-tight text-ink">
-                  {editingVendor ? 'Edit Vendor Details' : 'Register New Vendor'}
+                  {editingVendor ? 'Edit Vendor' : 'Add Vendor'}
                 </h3>
                 <p className="text-xs text-ink/70">
-                  {editingVendor ? `Updating #${editingVendor.vendor_id}` : 'Provide contact and pricing details'}
+                  {editingVendor ? `Vendor #${editingVendor.vendor_id}` : 'Saved to the vendors table'}
                 </p>
               </div>
             </div>
 
             <form onSubmit={handleFormSubmit} className="space-y-4" noValidate>
-              {/* Vendor Name */}
               <div className="space-y-1">
-                <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                  Vendor Business Name <span className="text-red-700">*</span>
+                <label htmlFor="vendor_name" className={labelClass}>
+                  Vendor Name <span className="text-red-700">*</span>
                 </label>
                 <input
+                  id="vendor_name"
                   type="text"
-                  required
                   maxLength={150}
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g. Royal Rasoi Caterers"
-                  className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine"
+                  value={formData.vendor_name}
+                  onChange={(e) => setFormData({ ...formData, vendor_name: e.target.value })}
+                  placeholder="e.g. Delicious Catering"
+                  className={inputClass}
                 />
-                {formErrors.name && <p className="text-xs text-red-700">{formErrors.name}</p>}
+                {formErrors.vendor_name && <p className="text-xs text-red-700">{formErrors.vendor_name}</p>}
               </div>
 
-              {/* Service Type & City */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Service Type
-                  </label>
-                  <select
-                    value={formData.service_type}
-                    onChange={(e) => setFormData({ ...formData, service_type: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
-                  >
-                    {SERVICE_TYPES.map((st) => (
-                      <option key={st} value={st}>
-                        {st}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    City <span className="text-red-700">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={80}
-                    value={formData.city}
-                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                    placeholder="e.g. Bengaluru"
-                    className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
-                  />
-                  {formErrors.city && <p className="text-xs text-red-700">{formErrors.city}</p>}
-                </div>
+              <div className="space-y-1">
+                <label htmlFor="service_id" className={labelClass}>
+                  Service <span className="text-red-700">*</span>
+                </label>
+                <select
+                  id="service_id"
+                  value={formData.service_id}
+                  onChange={(e) => setFormData({ ...formData, service_id: e.target.value })}
+                  className={inputClass}
+                >
+                  <option value="">Select a service</option>
+                  {services.map((s) => (
+                    <option key={s.service_id} value={String(s.service_id)}>
+                      {s.service_name}
+                    </option>
+                  ))}
+                </select>
+                {formErrors.service_id && <p className="text-xs text-red-700">{formErrors.service_id}</p>}
               </div>
 
-              {/* Phone & Status */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label htmlFor="service_description" className={labelClass}>
+                  Service Description
+                </label>
+                <textarea
+                  id="service_description"
+                  rows={3}
+                  value={formData.service_description}
+                  onChange={(e) => setFormData({ ...formData, service_description: e.target.value })}
+                  placeholder="e.g. Food and beverage services for up to 500 guests"
+                  className={inputClass}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Contact Phone <span className="text-red-700">*</span>
+                  <label htmlFor="vendor_phone" className={labelClass}>
+                    Phone
                   </label>
                   <input
-                    type="text"
-                    required
+                    id="vendor_phone"
+                    type="tel"
                     maxLength={20}
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    placeholder="+91 9845012345"
-                    className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
+                    placeholder="9876543210"
+                    className={inputClass}
                   />
                   {formErrors.phone && <p className="text-xs text-red-700">{formErrors.phone}</p>}
                 </div>
 
                 <div className="space-y-1">
-                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Initial Status
+                  <label htmlFor="vendor_email" className={labelClass}>
+                    Email
                   </label>
-                  <select
-                    value={formData.status}
-                    onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
-                  >
-                    <option value="Active">Active</option>
-                    <option value="Inactive">Inactive</option>
-                  </select>
+                  <input
+                    id="vendor_email"
+                    type="email"
+                    maxLength={150}
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    placeholder="vendor@example.com"
+                    className={inputClass}
+                  />
+                  {formErrors.email && <p className="text-xs text-red-700">{formErrors.email}</p>}
                 </div>
               </div>
 
-              {/* Price Range & Rating */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1">
-                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Price Min (₹)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={formData.price_min}
-                    onChange={(e) => setFormData({ ...formData, price_min: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
-                  />
-                  {formErrors.price_min && (
-                    <p className="text-xs text-red-700">{formErrors.price_min}</p>
-                  )}
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Price Max (₹)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={formData.price_max}
-                    onChange={(e) => setFormData({ ...formData, price_max: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
-                  />
-                  {formErrors.price_max && (
-                    <p className="text-xs text-red-700">{formErrors.price_max}</p>
-                  )}
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Rating (1-5)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="1"
-                    max="5"
-                    value={formData.rating}
-                    onChange={(e) => setFormData({ ...formData, rating: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
-                  />
-                </div>
-              </div>
-
-
-
-              {/* Submit Buttons */}
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-sand-dark">
                 <button
                   type="button"
@@ -669,9 +491,10 @@ export default function ManageVendors() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-sm"
+                  disabled={saving}
+                  className="px-5 py-2.5 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-sm disabled:opacity-60"
                 >
-                  {editingVendor ? 'Save Changes' : 'Register Vendor'}
+                  {saving ? 'Saving…' : editingVendor ? 'Save Changes' : 'Add Vendor'}
                 </button>
               </div>
             </form>
@@ -679,14 +502,14 @@ export default function ManageVendors() {
         </div>
       )}
 
-      {/* Delete Vendor Confirmation Modal */}
       <ConfirmModal
         isOpen={deleteModalOpen}
-        title="Delete Vendor Partnership?"
-        message={`Are you sure you want to permanently delete "${vendorToDelete?.name}"? Past assignments will lose this vendor link.`}
+        title="Delete Vendor?"
+        message={`Permanently delete "${vendorToDelete?.vendor_name}"? Its links to events in event_vendors are removed too.`}
         confirmText="Confirm Delete"
         cancelText="Cancel"
         isDanger={true}
+        isLoading={deleting}
         onConfirm={confirmDeleteVendor}
         onClose={() => {
           setDeleteModalOpen(false);
