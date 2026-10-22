@@ -58,39 +58,39 @@ async function request(endpoint, options = {}) {
   }
 }
 
-// Venues API
+// Venues API  (backend: /api/venues, hours in table venueoperatinghours)
+// Every venue object returned here carries a `hours` array from /api/venue-hours.
+function groupHours(rows) {
+  const byVenue = {};
+  (rows || []).forEach((h) => {
+    (byVenue[h.venue_id] = byVenue[h.venue_id] || []).push(h);
+  });
+  return byVenue;
+}
+
 export const venuesApi = {
-  getAll: (params = {}) => {
-    const searchParams = new URLSearchParams();
-    if (params.city) searchParams.set('city', params.city);
-    if (params.min_capacity) searchParams.set('min_capacity', params.min_capacity);
-    if (params.q) searchParams.set('q', params.q);
-    const query = searchParams.toString();
-    return request(`/venues${query ? `?${query}` : ''}`);
+  getAll: async () => {
+    const [venues, hours] = await Promise.all([
+      request('/api/venues'),
+      request('/api/venue-hours'),
+    ]);
+    const byVenue = groupHours(hours);
+    return (venues || []).map((v) => ({ ...v, hours: byVenue[v.venue_id] || [] }));
   },
 
-  getById: (id) => request(`/venues/${id}`),
+  getById: async (id) => {
+    const [venue, hours] = await Promise.all([
+      request(`/api/venues/${id}`),
+      request(`/api/venue-hours?venue_id=${id}`),
+    ]);
+    return { ...venue, hours: hours || [] };
+  },
 
-  create: (venueData) => request('/venues', {
-    method: 'POST',
-    body: venueData,
-  }),
-
-  update: (id, venueData) => request(`/venues/${id}`, {
-    method: 'PUT',
-    body: venueData,
-  }),
-
-  delete: (id) => request(`/venues/${id}`, {
-    method: 'DELETE',
-  }),
-
-  updateHours: (id, hoursArray) => request(`/venues/${id}/hours`, {
-    method: 'PUT',
-    body: hoursArray,
-  }),
+  create: (venueData) => request('/api/venues', { method: 'POST', body: venueData }),
+  update: (id, venueData) => request(`/api/venues/${id}`, { method: 'PUT', body: venueData }),
+  delete: (id) => request(`/api/venues/${id}`, { method: 'DELETE' }),
+  updateHours: (id, hoursArray) => request(`/venues/${id}/hours`, { method: 'PUT', body: hoursArray }),
 };
-
 // Categories API (table: categories)
 export const categoriesApi = {
   getAll: () => request('/api/categories'),
