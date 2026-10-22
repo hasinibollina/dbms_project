@@ -55,6 +55,7 @@ export default function VenueForm() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   // Fetch venue and hours if in edit mode
   useEffect(() => {
@@ -101,22 +102,7 @@ export default function VenueForm() {
           }
         }
       } catch (err) {
-        console.warn(`Could not load venue #${id} from backend:`, err.message);
-        toast.error(`Failed to load venue #${id}. Initializing with placeholder data.`);
-        // Fallback for demonstration if backend is down
-        if (isMounted) {
-          setFormData({
-            name: 'Apex Convention Center',
-            address: '100 Silicon Boulevard',
-            city: 'Bengaluru',
-            capacity: '1500',
-            price_per_hour: '5000',
-            contact_phone: '+91 8023456789',
-            description: 'State-of-the-art auditorium with high-speed fiber internet.',
-            image_url: 'https://images.unsplash.com/photo-1540575467063-178a50c2df87',
-            is_active: true,
-          });
-        }
+        if (isMounted) setLoadError(err.status === 404 ? `Venue #${id} does not exist.` : err.message);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -210,41 +196,29 @@ export default function VenueForm() {
       is_closed: Boolean(h.is_closed),
     }));
 
+    let savedId = isEdit ? id : null;
     try {
       if (isEdit) {
-        // Update Venue
         await venuesApi.update(id, payload);
-        // Update Operating Hours
-        try {
-          await venuesApi.updateHours(id, formattedHours);
-        } catch (hoursErr) {
-          console.warn('Hours update endpoint notice:', hoursErr.message);
-        }
-        toast.success(`Venue "${formData.name}" updated successfully!`);
-        navigate(`/venues/${id}`);
       } else {
-        // Create Venue
         const created = await venuesApi.create(payload);
-        const newId = created?.venue_id || created?.id || 1;
-        // Submit Operating Hours for newly created venue
-        try {
-          await venuesApi.updateHours(newId, formattedHours);
-        } catch (hoursErr) {
-          console.warn('Hours create endpoint notice:', hoursErr.message);
-        }
-        toast.success(`Venue "${formData.name}" created successfully!`);
-        navigate(`/venues/${newId}`);
+        savedId = created.venue_id;
       }
     } catch (err) {
-      console.error('Save venue error:', err);
-      // In college DBMS presentation, if backend is not started yet, show friendly notice
-      toast.error(`Saved locally (Backend API offline: ${err.message})`);
-      setTimeout(() => {
-        navigate(isEdit ? `/venues/${id}` : '/venues');
-      }, 1000);
+      toast.error(`Could not save venue: ${err.message}`);
+      setSaving(false);
+      return;
+    }
+
+    try {
+      await venuesApi.updateHours(savedId, formattedHours);
+      toast.success(`Venue "${formData.name}" ${isEdit ? 'updated' : 'created'}.`);
+    } catch (err) {
+      toast.error(`Venue saved, but operating hours failed: ${err.message}`);
     } finally {
       setSaving(false);
     }
+    navigate(`/venues/${savedId}`);
   };
 
   // Delete Venue Handler
@@ -263,6 +237,17 @@ export default function VenueForm() {
       setDeleting(false);
     }
   };
+
+  if (loadError) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-16">
+        <div className="p-5 rounded-xl bg-red-50 border border-red-300 text-sm text-ink/80">
+          <strong className="text-red-700 block mb-1">Could not load this venue</strong>
+          {loadError}
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
