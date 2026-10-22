@@ -22,12 +22,6 @@ import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { computeIsOpen } from '../utils/hoursUtils';
-import {
-  SEED_VENUES,
-  getStoredVenues,
-  saveStoredVenues,
-  formatINR,
-} from '../data/seedData';
 
 export default function ManageVenues() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -37,7 +31,7 @@ export default function ManageVenues() {
 
   const [venues, setVenues] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isUsingFallback, setIsUsingFallback] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   // Delete modal states
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -54,26 +48,13 @@ export default function ManageVenues() {
 
   const loadVenues = async () => {
     setLoading(true);
+    setLoadError('');
     try {
-      const data = await venuesApi.getAll({
-        city: filters.city,
-        min_capacity: filters.min_capacity,
-        q: filters.q,
-      });
-
-      if (Array.isArray(data) && data.length > 0) {
-        setVenues(data);
-        setIsUsingFallback(false);
-      } else if (data?.venues && Array.isArray(data.venues) && data.venues.length > 0) {
-        setVenues(data.venues);
-        setIsUsingFallback(false);
-      } else {
-        throw new Error('Using fallback seed venues');
-      }
-    } catch {
-      setIsUsingFallback(true);
-      const stored = getStoredVenues();
-      setVenues(stored);
+      const data = await venuesApi.getAll();
+      setVenues(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setVenues([]);
+      setLoadError(err.message || 'Could not load venues.');
     } finally {
       setLoading(false);
     }
@@ -81,7 +62,7 @@ export default function ManageVenues() {
 
   useEffect(() => {
     loadVenues();
-  }, [filters.city, filters.min_capacity, filters.q]);
+  }, []);
 
   // Client-side filtering
   const filteredVenues = useMemo(() => {
@@ -128,17 +109,15 @@ export default function ManageVenues() {
     setDeleting(true);
     try {
       await venuesApi.delete(venueToDelete.venue_id);
+      setVenues((prev) => prev.filter((v) => v.venue_id !== venueToDelete.venue_id));
+      toast.success(`Venue "${venueToDelete.name}" deleted.`);
+      setDeleteModalOpen(false);
+      setVenueToDelete(null);
     } catch (err) {
-      console.warn('Backend delete venue failed, updating local state:', err.message);
+      toast.error(`Could not delete venue: ${err.message}`);
+    } finally {
+      setDeleting(false);
     }
-
-    const updated = venues.filter((v) => v.venue_id !== venueToDelete.venue_id);
-    setVenues(updated);
-    saveStoredVenues(updated);
-    toast.success(`Venue "${venueToDelete.name}" deleted successfully.`);
-    setDeleteModalOpen(false);
-    setVenueToDelete(null);
-    setDeleting(false);
   };
 
   return (
@@ -180,15 +159,12 @@ export default function ManageVenues() {
         </div>
       </div>
 
-      {/* Fallback Notice Banner if API not reachable */}
-      {isUsingFallback && (
-        <div className="mb-6 p-4 rounded-xl bg-sand border border-sand-dark flex items-start gap-3 shadow-sm">
-          <AlertCircle className="w-5 h-5 text-wine flex-shrink-0 mt-0.5" />
+      {loadError && (
+        <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-300 flex items-start gap-3 shadow-sm">
+          <AlertCircle className="w-5 h-5 text-red-700 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-ink/80">
-            <strong className="text-wine font-semibold block mb-0.5">
-              Demonstration Mode (DBMS Seed Data)
-            </strong>
-            Backend connection ({import.meta.env.VITE_API_URL || 'http://localhost:8000'}) is currently offline. Displaying local normalized database seed venues with full operating hours calculations and CRUD support.
+            <strong className="text-red-700 font-semibold block mb-0.5">Could not load venues from the database</strong>
+            {loadError}
           </div>
         </div>
       )}
