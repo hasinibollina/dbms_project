@@ -15,7 +15,7 @@ export default function Register() {
     email: '',
     password: '',
     phone: '',
-    role: 'organizer',
+    role: 'Attendee',
   });
   const [loading, setLoading] = useState(false);
   const [formErrors, setFormErrors] = useState({});
@@ -102,6 +102,7 @@ export default function Register() {
                 name="full_name"
                 type="text"
                 required
+                maxLength={100}
                 value={formData.full_name}
                 onChange={handleInputChange}
                 placeholder="e.g. Priya Sharma"
@@ -128,6 +129,7 @@ export default function Register() {
                 name="email"
                 type="email"
                 required
+                maxLength={150}
                 value={formData.email}
                 onChange={handleInputChange}
                 placeholder="name@example.com"
@@ -179,11 +181,32 @@ export default function Register() {
                 id="reg-phone"
                 name="phone"
                 type="tel"
+                maxLength={20}
                 value={formData.phone}
                 onChange={handleInputChange}
                 placeholder="+91 9876543210"
                 className="w-full pl-11 pr-4 py-3 bg-sand-dark/30 border border-sand-dark rounded-xl text-sm font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all"
               />
+            </div>
+          </div>
+
+          {/* Role (CHECK role IN ('Attendee', 'Organizer', 'Admin')) */}
+          <div className="space-y-1.5">
+            <label htmlFor="reg-role" className="block text-xs font-heading uppercase tracking-wider text-ink">
+              Account Role <span className="text-red-700">*</span>
+            </label>
+            <div className="relative">
+              <ShieldCheck className="w-4 h-4 text-wine absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <select
+                id="reg-role"
+                name="role"
+                value={formData.role}
+                onChange={handleInputChange}
+                className="w-full pl-11 pr-4 py-3 bg-sand-dark/30 border border-sand-dark rounded-xl text-sm font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all"
+              >
+                <option value="Attendee">Attendee (Browse & Register for Events)</option>
+                <option value="Organizer">Organizer (Host & Manage Events)</option>
+              </select>
             </div>
           </div>
 

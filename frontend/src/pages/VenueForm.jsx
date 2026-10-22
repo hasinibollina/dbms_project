@@ -330,6 +330,7 @@ export default function VenueForm() {
                 name="name"
                 type="text"
                 required
+                maxLength={120}
                 value={formData.name}
                 onChange={handleInputChange}
                 placeholder="e.g. Apex Convention Center"
@@ -353,6 +354,7 @@ export default function VenueForm() {
                 name="city"
                 type="text"
                 required
+                maxLength={80}
                 value={formData.city}
                 onChange={handleInputChange}
                 placeholder="e.g. Bengaluru, Hyderabad, Mumbai"
@@ -375,6 +377,7 @@ export default function VenueForm() {
                 id="venue-phone"
                 name="contact_phone"
                 type="tel"
+                maxLength={20}
                 value={formData.contact_phone}
                 onChange={handleInputChange}
                 placeholder="+91 8023456789"
@@ -392,6 +395,7 @@ export default function VenueForm() {
                 name="address"
                 type="text"
                 required
+                maxLength={255}
                 value={formData.address}
                 onChange={handleInputChange}
                 placeholder="e.g. 100 Silicon Boulevard, Tech Park Road"
