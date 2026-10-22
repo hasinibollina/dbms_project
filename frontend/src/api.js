@@ -91,9 +91,14 @@ export const venuesApi = {
   }),
 };
 
-// Categories API
+// Categories API (table: categories)
 export const categoriesApi = {
-  getAll: () => request('/categories'),
+  getAll: () => request('/api/categories'),
+};
+
+// Services API (table: services, referenced by vendors.service_id)
+export const servicesApi = {
+  getAll: () => request('/api/services'),
 };
 
 // Users / Auth API
@@ -178,6 +183,7 @@ export default {
   API_BASE_URL,
   venues: venuesApi,
   categories: categoriesApi,
+  services: servicesApi,
   auth: authApi,
   events: eventsApi,
   admin: adminApi,
