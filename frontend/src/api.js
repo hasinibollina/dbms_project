@@ -89,7 +89,26 @@ export const venuesApi = {
   create: (venueData) => request('/api/venues', { method: 'POST', body: venueData }),
   update: (id, venueData) => request(`/api/venues/${id}`, { method: 'PUT', body: venueData }),
   delete: (id) => request(`/api/venues/${id}`, { method: 'DELETE' }),
-  updateHours: (id, hoursArray) => request(`/venues/${id}/hours`, { method: 'PUT', body: hoursArray }),
+    // Saves a 7-day schedule: updates days that already have a row, inserts the rest.
+  updateHours: async (id, hoursArray) => {
+    const existing = await request(`/api/venue-hours?venue_id=${id}`);
+    const byDay = {};
+    (existing || []).forEach((h) => { byDay[Number(h.day_of_week)] = h; });
+    for (const h of hoursArray) {
+      const body = {
+        day_of_week: Number(h.day_of_week),
+        open_time: h.is_closed ? null : h.open_time,
+        close_time: h.is_closed ? null : h.close_time,
+        is_closed: Boolean(h.is_closed),
+      };
+      const current = byDay[body.day_of_week];
+      if (current) {
+        await request(`/api/venues/operating-hours/${current.hours_id}`, { method: 'PUT', body });
+      } else {
+        await request(`/api/venues/${id}/operating-hours`, { method: 'POST', body });
+      }
+    }
+  },
 };
 // Categories API (table: categories)
 export const categoriesApi = {
