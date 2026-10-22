@@ -8,80 +8,12 @@ import { VenueCardSkeleton } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import { useAuth } from '../context/AuthContext';
 
-// Mock venues aligned with database/member1_seed.sql for offline fallback
-const FALLBACK_VENUES = [
-  {
-    venue_id: 1,
-    name: 'Apex Convention Center',
-    address: '100 Silicon Boulevard',
-    city: 'Bengaluru',
-    capacity: 1500,
-    price_per_hour: 5000.0,
-    contact_phone: '+91 8023456789',
-    description: 'State-of-the-art auditorium with high-speed fiber internet and acoustic design.',
-    image_url: 'https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=1200&q=80',
-    is_active: true,
-    hours: [
-      { day_of_week: 0, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 1, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 2, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 3, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 4, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 5, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 6, open_time: null, close_time: null, is_closed: true },
-    ],
-  },
-  {
-    venue_id: 2,
-    name: 'Symphony Amphitheatre',
-    address: '45 Green Meadows Road',
-    city: 'Hyderabad',
-    capacity: 800,
-    price_per_hour: 3500.0,
-    contact_phone: '+91 4023456780',
-    description: 'Open air amphitheatre surrounded by lush gardens, ideal for concerts and community performances.',
-    image_url: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=1200&q=80',
-    is_active: true,
-    hours: [
-      { day_of_week: 0, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 1, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 2, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 3, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 4, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 5, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 6, open_time: null, close_time: null, is_closed: true },
-    ],
-  },
-  {
-    venue_id: 3,
-    name: 'Innovate Cowork & Hall',
-    address: '12 MG Road',
-    city: 'Mumbai',
-    capacity: 250,
-    price_per_hour: 1500.0,
-    contact_phone: '+91 2223456781',
-    description: 'Modern modular event space with AV projectors, podcast recording room, and breakout pods.',
-    image_url: 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?auto=format&fit=crop&w=1200&q=80',
-    is_active: true,
-    hours: [
-      { day_of_week: 0, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 1, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 2, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 3, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 4, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 5, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 6, open_time: null, close_time: null, is_closed: true },
-    ],
-  },
-];
-
 export default function Venues() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { isOrganizerOrAdmin } = useAuth();
 
   const [venues, setVenues] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isUsingFallback, setIsUsingFallback] = useState(false);
   const [fetchError, setFetchError] = useState(null);
 
   // Filters state initialized from URL params
@@ -108,7 +40,7 @@ export default function Venues() {
 
   useEffect(() => {
     loadVenues();
-  }, [filters.city, filters.min_capacity, filters.q]);
+  }, []);
 
   // Client-side filtering (handles max_price and fallback search)
   const filteredVenues = useMemo(() => {
@@ -196,15 +128,12 @@ export default function Venues() {
         </div>
       </div>
 
-      {/* Fallback Notice Banner if API not reachable */}
-      {isUsingFallback && (
-        <div className="mb-6 p-4 rounded-xl bg-sand border border-sand-dark flex items-start gap-3 shadow-sm">
-          <AlertCircle className="w-5 h-5 text-wine flex-shrink-0 mt-0.5" />
+      {fetchError && (
+        <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-300 flex items-start gap-3 shadow-sm">
+          <AlertCircle className="w-5 h-5 text-red-700 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-ink/80">
-            <strong className="text-wine font-semibold block mb-0.5">
-              Demonstration Mode (DBMS Seed Data)
-            </strong>
-            Backend connection ({import.meta.env.VITE_API_URL || 'http://localhost:8000'}) is currently offline. Displaying local normalized database seed venues with full operating hours calculations.
+            <strong className="text-red-700 font-semibold block mb-0.5">Could not load venues from the database</strong>
+            {fetchError}
           </div>
         </div>
       )}
