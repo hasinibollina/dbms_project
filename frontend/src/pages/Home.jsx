@@ -20,7 +20,6 @@ import EventCard from '../components/EventCard';
 import { VenueCardSkeleton, EventCardSkeleton } from '../components/Skeleton';
 import {
   SEED_CATEGORIES as FALLBACK_CATEGORIES,
-  SEED_VENUES as FALLBACK_VENUES,
   SEED_EVENTS as FALLBACK_EVENTS,
 } from '../data/seedData';
 
@@ -63,13 +62,9 @@ export default function Home() {
       setLoadingVenues(true);
       try {
         const data = await venuesApi.getAll();
-        if (Array.isArray(data) && data.length > 0) {
-          setVenues(data.slice(0, 3));
-        } else {
-          setVenues(FALLBACK_VENUES);
-        }
+        setVenues(Array.isArray(data) ? data.filter((v) => v.is_active).slice(0, 3) : []);
       } catch {
-        setVenues(FALLBACK_VENUES);
+        setVenues([]);
       } finally {
         setLoadingVenues(false);
       }
@@ -283,12 +278,16 @@ export default function Home() {
               <VenueCardSkeleton />
               <VenueCardSkeleton />
             </div>
-          ) : (
+          ) : venues.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {venues.map((venue) => (
                 <VenueCard key={venue.venue_id} venue={venue} />
               ))}
             </div>
+          ) : (
+            <p className="text-sm text-ink/60 py-8 text-center border border-dashed border-sand-dark rounded-2xl">
+              No venues have been added yet.
+            </p>
           )}
         </div>
       </section>
