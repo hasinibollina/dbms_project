@@ -1458,3 +1458,128 @@ def update_operating_hours(
             status_code=500,
             detail="Could not update operating hours."
         )
+
+# Vendors CRUD (/api/vendors)
+# --------------------------------------------------------------------------
+@app.get("/api/vendors")
+def list_vendors(
+    service_id: Optional[int] = Query(None),
+    q: Optional[str] = Query(None),
+):
+    """List vendors with their service name. Optional filters: service_id, q (name/email/phone)."""
+    conditions, params = ["1=1"], {}
+    if service_id:
+        conditions.append("v.service_id = :service_id")
+        params["service_id"] = service_id
+    if q:
+        conditions.append("(v.vendor_name ILIKE :q OR v.email ILIKE :q OR v.phone ILIKE :q)")
+        params["q"] = f"%{q}%"
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"""
+                SELECT {VENDOR_COLUMNS}, COUNT(ev.event_id) AS events_served
+                FROM vendors v
+                JOIN services s ON s.service_id = v.service_id
+                LEFT JOIN event_vendors ev ON ev.vendor_id = v.vendor_id
+                WHERE {' AND '.join(conditions)}
+                GROUP BY v.vendor_id, s.service_name
+                ORDER BY v.vendor_name;
+            """), params).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not load vendors", e)
+
+
+def _fetch_vendor(conn, vendor_id: int):
+    return conn.execute(text(f"""
+        SELECT {VENDOR_COLUMNS}
+        FROM vendors v JOIN services s ON s.service_id = v.service_id
+        WHERE v.vendor_id = :id;
+    """), {"id": vendor_id}).mappings().one_or_none()
+
+
+@app.get("/api/vendors/{vendor_id}")
+def get_vendor_by_id(vendor_id: int):
+    try:
+        with engine.connect() as conn:
+            row = _fetch_vendor(conn, vendor_id)
+    except Exception as e:
+        _db_error("Could not load vendor", e)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Vendor not found.")
+    return dict(row)
+
+
+def _check_service(conn, service_id):
+    exists = conn.execute(text("SELECT 1 FROM services WHERE service_id = :id;"), {"id": service_id}).scalar()
+    if not exists:
+        raise HTTPException(status_code=400, detail="Selected service does not exist.")
+
+
+@app.post("/api/vendors", status_code=status.HTTP_201_CREATED)
+def create_vendor(vendor: VendorCreate):
+    try:
+        with engine.begin() as conn:
+            _check_service(conn, vendor.service_id)
+            new_id = conn.execute(text("""
+                INSERT INTO vendors (vendor_name, service_id, service_description, phone, email)
+                VALUES (:vendor_name, :service_id, :service_description, :phone, :email)
+                RETURNING vendor_id;
+            """), {
+                "vendor_name": vendor.vendor_name.strip(),
+                "service_id": vendor.service_id,
+                "service_description": vendor.service_description,
+                "phone": vendor.phone,
+                "email": vendor.email,
+            }).scalar_one()
+            return dict(_fetch_vendor(conn, new_id))
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="Invalid service selected.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not create vendor", e)
+
+
+@app.put("/api/vendors/{vendor_id}")
+def update_vendor(vendor_id: int, vendor_data: VendorUpdate):
+    updates = vendor_data.model_dump(exclude_unset=True)
+    if "vendor_name" in updates and updates["vendor_name"]:
+        updates["vendor_name"] = updates["vendor_name"].strip()
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided.")
+    assignments = ", ".join(f"{k} = :{k}" for k in updates)
+    try:
+        with engine.begin() as conn:
+            if updates.get("service_id") is not None:
+                _check_service(conn, updates["service_id"])
+            found = conn.execute(text(
+                f"UPDATE vendors SET {assignments} WHERE vendor_id = :vendor_id RETURNING vendor_id;"
+            ), {**updates, "vendor_id": vendor_id}).scalar_one_or_none()
+            if found is None:
+                raise HTTPException(status_code=404, detail="Vendor not found.")
+            return dict(_fetch_vendor(conn, vendor_id))
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="Invalid service selected.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not update vendor", e)
+
+
+@app.delete("/api/vendors/{vendor_id}")
+def delete_vendor(vendor_id: int):
+    try:
+        with engine.begin() as conn:
+            deleted = conn.execute(text(
+                "DELETE FROM vendors WHERE vendor_id = :id RETURNING vendor_id;"
+            ), {"id": vendor_id}).scalar_one_or_none()
+    except Exception as e:
+        _db_error("Could not delete vendor", e)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Vendor not found.")
+    return {"message": "Vendor deleted successfully", "vendor_id": vendor_id}
+
+
+
+# --------------------------------------------------------------------------
