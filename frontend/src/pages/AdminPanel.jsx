@@ -1115,7 +1115,7 @@ export default function AdminPanel() {
             </div>
           </div>
 
-          {/* Table of ALL Vendors (connected to services schema) */}
+          {/* Table of ALL Vendors */}
           <div className="bg-sand rounded-2xl border border-sand-dark p-6 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
               <div>
