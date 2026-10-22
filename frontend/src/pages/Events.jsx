@@ -21,101 +21,13 @@ import { EventCardSkeleton } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import ConfirmModal from '../components/ConfirmModal';
 import { useToast } from '../context/ToastContext';
+import { SEED_EVENTS } from '../data/seedData';
 
 // ==============================================================================
 // TODO: The events API is built by another teammate and may not exist yet.
 // Fetch from GET /events and fall back to this mock list if the request fails.
 // ==============================================================================
-const MOCK_EVENTS = [
-  {
-    event_id: 101,
-    title: 'Future of Generative AI Summit 2026',
-    date: '2026-11-14T10:00:00',
-    venue: 'Apex Convention Center',
-    city: 'Bengaluru',
-    price: 1499,
-    category: 'Technology & AI',
-    image_url: 'https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=800&q=80',
-    description: 'A two-day multi-track conference featuring keynotes on LLMs, agentic AI systems, and enterprise vector databases.',
-  },
-  {
-    event_id: 102,
-    title: 'Acoustic Sunset Symphony & Jazz Night',
-    date: '2026-10-30T18:30:00',
-    venue: 'Symphony Amphitheatre',
-    city: 'Hyderabad',
-    price: 899,
-    category: 'Music & Concerts',
-    image_url: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=800&q=80',
-    description: 'Live performance by premier jazz musicians and orchestral string ensembles under the open evening sky.',
-  },
-  {
-    event_id: 103,
-    title: 'Angel Investors & Startup Pitch Day',
-    date: '2026-11-05T14:00:00',
-    venue: 'Innovate Cowork & Hall',
-    city: 'Mumbai',
-    price: 499,
-    category: 'Business & Networking',
-    image_url: 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?auto=format&fit=crop&w=800&q=80',
-    description: '20 curated early-stage startups pitching to leading venture capitalists, angel syndicates, and founders.',
-  },
-  {
-    event_id: 104,
-    title: 'Modern Digital Art & Interactive Installation',
-    date: '2026-11-20T11:00:00',
-    venue: 'Apex Convention Center',
-    city: 'Bengaluru',
-    price: 0,
-    category: 'Arts & Theatre',
-    image_url: 'https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?auto=format&fit=crop&w=800&q=80',
-    description: 'Immersive light installations, algorithmic projections, and generative digital artwork galleries.',
-  },
-  {
-    event_id: 105,
-    title: 'Full-Stack DBMS & Cloud Architecture Bootcamp',
-    date: '2026-11-28T09:00:00',
-    venue: 'Innovate Cowork & Hall',
-    city: 'Mumbai',
-    price: 1999,
-    category: 'Workshops & Learning',
-    image_url: 'https://images.unsplash.com/photo-1531482615713-2afd69097998?auto=format&fit=crop&w=800&q=80',
-    description: 'Hands-on intensive masterclass on PostgreSQL query optimization, relational indexing, and ACID transaction semantics.',
-  },
-  {
-    event_id: 106,
-    title: 'Classical Strings & Fusion Orchestra Live',
-    date: '2026-12-04T19:00:00',
-    venue: 'Symphony Amphitheatre',
-    city: 'Hyderabad',
-    price: 1200,
-    category: 'Music & Concerts',
-    image_url: 'https://images.unsplash.com/photo-1465847899084-d164df4dedc6?auto=format&fit=crop&w=800&q=80',
-    description: 'An evening celebrating Eastern classical melodies fused with Western orchestral harmonies.',
-  },
-  {
-    event_id: 107,
-    title: 'Autonomous Systems & Robotics Hackathon',
-    date: '2026-12-12T09:00:00',
-    venue: 'Apex Convention Center',
-    city: 'Bengaluru',
-    price: 0,
-    category: 'Technology & AI',
-    image_url: 'https://images.unsplash.com/photo-1485827404703-89b55fcc595e?auto=format&fit=crop&w=800&q=80',
-    description: '36-hour collegiate hackathon building real-time autonomous navigation, vision models, and IoT sensors.',
-  },
-  {
-    event_id: 108,
-    title: 'Contemporary Playwrights Drama Festival',
-    date: '2026-12-18T16:00:00',
-    venue: 'Symphony Amphitheatre',
-    city: 'Hyderabad',
-    price: 350,
-    category: 'Arts & Theatre',
-    image_url: 'https://images.unsplash.com/photo-1507676184212-d03ab07a01bf?auto=format&fit=crop&w=800&q=80',
-    description: 'Three live theatrical plays staged by award-winning independent collegiate drama troupes.',
-  },
-];
+const MOCK_EVENTS = SEED_EVENTS;
 
 const ITEMS_PER_PAGE = 6;
 
@@ -275,46 +187,48 @@ export default function Events() {
       });
     }
 
-    // 4. Price Filter
+    // 4. Price Filter (using schema column ticket_price)
     if (filters.max_price) {
       if (filters.max_price === '0') {
-        result = result.filter((e) => Number(e.price) === 0);
+        result = result.filter((e) => Number(e.ticket_price ?? e.price ?? 0) === 0);
       } else {
-        result = result.filter((e) => Number(e.price) <= Number(filters.max_price));
+        result = result.filter((e) => Number(e.ticket_price ?? e.price ?? 0) <= Number(filters.max_price));
       }
     }
 
-    // 5. Date Range Filter
+    // 5. Date Range Filter (using schema column start_time)
     if (filters.date_range) {
       const now = new Date();
       if (filters.date_range === 'next_7_days') {
         const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
         result = result.filter((e) => {
-          const d = new Date(e.date);
+          const d = new Date(e.start_time || e.date);
           return d >= now && d <= in7Days;
         });
       } else if (filters.date_range === 'next_30_days') {
         const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
         result = result.filter((e) => {
-          const d = new Date(e.date);
+          const d = new Date(e.start_time || e.date);
           return d >= now && d <= in30Days;
         });
       }
     }
 
-    // 6. Sorting
+    // 6. Sorting (using schema columns ticket_price, start_time, title)
     result.sort((a, b) => {
       if (filters.sort === 'price_asc') {
-        return Number(a.price || 0) - Number(b.price || 0);
+        return Number(a.ticket_price ?? a.price ?? 0) - Number(b.ticket_price ?? b.price ?? 0);
       }
       if (filters.sort === 'price_desc') {
-        return Number(b.price || 0) - Number(a.price || 0);
+        return Number(b.ticket_price ?? b.price ?? 0) - Number(a.ticket_price ?? a.price ?? 0);
       }
       if (filters.sort === 'title_asc') {
         return (a.title || '').localeCompare(b.title || '');
       }
-      // Default: date_asc (soonest first)
-      return new Date(a.date).getTime() - new Date(b.date).getTime();
+      // Default: date_asc (soonest first by start_time)
+      const timeA = new Date(a.start_time || a.date).getTime();
+      const timeB = new Date(b.start_time || b.date).getTime();
+      return timeA - timeB;
     });
 
     return result;
@@ -578,7 +492,7 @@ export default function Events() {
           isOpen={Boolean(selectedEventForBooking)}
           title="Confirm Seat Reservation"
           message={`Would you like to reserve a ticket for "${selectedEventForBooking.title}" at ${selectedEventForBooking.venue}? Admission: ${
-            selectedEventForBooking.price === 0 ? 'Free' : `₹${selectedEventForBooking.price}`
+            (selectedEventForBooking.ticket_price ?? selectedEventForBooking.price) === 0 ? 'Free' : `₹${selectedEventForBooking.ticket_price ?? selectedEventForBooking.price}`
           }.`}
           confirmText="Confirm Reservation"
           cancelText="Cancel"

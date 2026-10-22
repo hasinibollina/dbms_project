@@ -18,110 +18,11 @@ import { categoriesApi, venuesApi, eventsApi } from '../api';
 import VenueCard from '../components/VenueCard';
 import EventCard from '../components/EventCard';
 import { VenueCardSkeleton, EventCardSkeleton } from '../components/Skeleton';
-
-// DBMS Seed Categories fallback (database/member1_seed.sql)
-const FALLBACK_CATEGORIES = [
-  { category_id: 1, name: 'Technology & AI', description: 'Conferences, hackathons, and tech workshops' },
-  { category_id: 2, name: 'Music & Concerts', description: 'Live music performances, bands, and DJ nights' },
-  { category_id: 3, name: 'Business & Networking', description: 'Investor summits, trade fairs, and entrepreneur meetups' },
-  { category_id: 4, name: 'Arts & Theatre', description: 'Exhibitions, drama, and creative showcases' },
-  { category_id: 5, name: 'Workshops & Learning', description: 'Hands-on skill building bootcamps' },
-];
-
-// Seed Venues fallback
-const FALLBACK_VENUES = [
-  {
-    venue_id: 1,
-    name: 'Apex Convention Center',
-    address: '100 Silicon Boulevard',
-    city: 'Bengaluru',
-    capacity: 1500,
-    price_per_hour: 5000.0,
-    description: 'State-of-the-art auditorium with high-speed fiber internet and acoustic design.',
-    image_url: 'https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=1200&q=80',
-    hours: [
-      { day_of_week: 0, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 1, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 2, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 3, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 4, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 5, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 6, open_time: null, close_time: null, is_closed: true },
-    ],
-  },
-  {
-    venue_id: 2,
-    name: 'Symphony Amphitheatre',
-    address: '45 Green Meadows Road',
-    city: 'Hyderabad',
-    capacity: 800,
-    price_per_hour: 3500.0,
-    description: 'Open air amphitheatre surrounded by lush gardens, ideal for concerts.',
-    image_url: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=1200&q=80',
-    hours: [
-      { day_of_week: 0, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 1, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 2, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 3, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 4, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 5, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 6, open_time: null, close_time: null, is_closed: true },
-    ],
-  },
-  {
-    venue_id: 3,
-    name: 'Innovate Cowork & Hall',
-    address: '12 MG Road',
-    city: 'Mumbai',
-    capacity: 250,
-    price_per_hour: 1500.0,
-    description: 'Modern modular event space with AV projectors and breakout rooms.',
-    image_url: 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?auto=format&fit=crop&w=1200&q=80',
-    hours: [
-      { day_of_week: 0, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 1, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 2, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 3, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 4, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 5, open_time: '09:00:00', close_time: '22:00:00', is_closed: false },
-      { day_of_week: 6, open_time: null, close_time: null, is_closed: true },
-    ],
-  },
-];
-
-// Fallback Mock Events for Home preview
-const FALLBACK_EVENTS = [
-  {
-    event_id: 101,
-    title: 'Future of Generative AI Summit 2026',
-    date: '2026-11-14T10:00:00',
-    venue: 'Apex Convention Center',
-    city: 'Bengaluru',
-    price: 1499,
-    category: 'Technology & AI',
-    image_url: 'https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=800&q=80',
-  },
-  {
-    event_id: 102,
-    title: 'Acoustic Sunset Symphony & Jazz Night',
-    date: '2026-10-30T18:30:00',
-    venue: 'Symphony Amphitheatre',
-    city: 'Hyderabad',
-    price: 899,
-    category: 'Music & Concerts',
-    image_url: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=800&q=80',
-  },
-  {
-    event_id: 103,
-    title: 'Angel Investors & Startup Pitch Day',
-    date: '2026-11-05T14:00:00',
-    venue: 'Innovate Cowork & Hall',
-    city: 'Mumbai',
-    price: 499,
-    category: 'Business & Networking',
-    image_url: 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?auto=format&fit=crop&w=800&q=80',
-  },
-];
+import {
+  SEED_CATEGORIES as FALLBACK_CATEGORIES,
+  SEED_VENUES as FALLBACK_VENUES,
+  SEED_EVENTS as FALLBACK_EVENTS,
+} from '../data/seedData';
 
 export default function Home() {
   const navigate = useNavigate();

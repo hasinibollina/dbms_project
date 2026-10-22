@@ -9,13 +9,16 @@ export default function EventCard({ event }) {
     id,
     event_id = id,
     title,
+    start_time,
+    end_time,
     date,
-    date_time = date,
+    date_time = start_time || date,
     venue,
     venue_name = typeof venue === 'object' ? venue?.name : venue,
     city = typeof venue === 'object' ? venue?.city : '',
+    ticket_price,
     price,
-    starting_price = price,
+    starting_price = ticket_price !== undefined ? ticket_price : price,
     category,
     category_name = typeof category === 'object' ? category?.name : category,
     image_url,
@@ -37,9 +40,9 @@ export default function EventCard({ event }) {
   const priceText =
     starting_price === 0 || starting_price === '0'
       ? 'Free Admission'
-      : starting_price
+      : starting_price !== undefined && starting_price !== null
       ? `From ₹${Number(starting_price).toLocaleString('en-IN')}`
-      : '₹499';
+      : 'Free Admission';
 
   return (
     <div className="group rounded-2xl border border-sand-dark bg-sand overflow-hidden shadow-sm hover:shadow-poster transition-all duration-200 flex flex-col justify-between hover:-translate-y-1">
