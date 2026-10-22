@@ -238,6 +238,45 @@ class VendorOut(VendorBase):
     vendor_id: int
     events_served: int = 0
 
+# --------------------------------------------------------------------------
+# Venue Pydantic Models
+# --------------------------------------------------------------------------
+
+class VenueCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    address: str = Field(min_length=1, max_length=255)
+    city: str = Field(min_length=1, max_length=100)
+    capacity: int = Field(gt=0)
+    price_per_hour: float = Field(ge=0)
+    contact_phone: str | None = Field(default=None, max_length=20)
+    description: str | None = None
+    image_url: str | None = Field(default=None, max_length=500)
+
+
+class VenueUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    address: str | None = Field(default=None, min_length=1, max_length=255)
+    city: str | None = Field(default=None, min_length=1, max_length=100)
+    capacity: int | None = Field(default=None, gt=0)
+    price_per_hour: float | None = Field(default=None, ge=0)
+    contact_phone: str | None = Field(default=None, max_length=20)
+    description: str | None = None
+    image_url: str | None = Field(default=None, max_length=500)
+    is_active: bool | None = None
+
+
+class OperatingHoursCreate(BaseModel):
+    day_of_week: int = Field(ge=0, le=6)
+    open_time: str | None = None
+    close_time: str | None = None
+    is_closed: bool = False
+
+
+class OperatingHoursUpdate(BaseModel):
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    open_time: str | None = None
+    close_time: str | None = None
+    is_closed: bool | None = None
 
 # --------------------------------------------------------------------------
 # Helper to test DB connection safely
@@ -784,3 +823,512 @@ def delete_vendor(vendor_id: int):
             return {"message": "Vendor deleted successfully", "vendor_id": deleted["vendor_id"]}
 
     raise HTTPException(status_code=404, detail="Vendor not found")
+
+# --------------------------------------------------------------------------
+# CRUD Endpoints for /api/venues
+# --------------------------------------------------------------------------
+
+# GET: View all venues
+@app.get("/api/venues")
+def list_venues():
+    """Retrieve all venues."""
+
+    if is_db_connected():
+        try:
+            with engine.connect() as conn:
+
+                q = text("""
+                    SELECT
+                        venue_id,
+                        name,
+                        address,
+                        city,
+                        capacity,
+                        price_per_hour,
+                        contact_phone,
+                        description,
+                        image_url,
+                        is_active,
+                        created_at
+                    FROM venues
+                    ORDER BY venue_id;
+                """)
+
+                rows = conn.execute(q).mappings().all()
+
+                return [dict(r) for r in rows]
+
+        except Exception as e:
+            logger.warning(f"DB query failed: {e}")
+
+    raise HTTPException(
+        status_code=500,
+        detail="Database not connected"
+    )
+
+
+# GET: View one venue
+@app.get("/api/venues/{venue_id}")
+def get_venue_by_id(venue_id: int):
+    """Retrieve a single venue by primary key."""
+
+    if is_db_connected():
+        try:
+            with engine.connect() as conn:
+
+                q = text("""
+                    SELECT
+                        venue_id,
+                        name,
+                        address,
+                        city,
+                        capacity,
+                        price_per_hour,
+                        contact_phone,
+                        description,
+                        image_url,
+                        is_active,
+                        created_at
+                    FROM venues
+                    WHERE venue_id = :id;
+                """)
+
+                row = conn.execute(
+                    q,
+                    {"id": venue_id}
+                ).mappings().first()
+
+                if row:
+                    return dict(row)
+
+        except Exception as e:
+            logger.warning(f"DB query failed: {e}")
+
+    raise HTTPException(
+        status_code=404,
+        detail="Venue not found"
+    )
+
+
+# POST: Add a venue
+@app.post("/api/venues", status_code=status.HTTP_201_CREATED)
+def create_venue(venue: VenueCreate):
+    """Create a new venue entry."""
+
+    if is_db_connected():
+        try:
+            with engine.begin() as conn:
+
+                q = text("""
+                    INSERT INTO venues
+                    (
+                        name,
+                        address,
+                        city,
+                        capacity,
+                        price_per_hour,
+                        contact_phone,
+                        description,
+                        image_url,
+                        is_active
+                    )
+                    VALUES
+                    (
+                        :name,
+                        :address,
+                        :city,
+                        :capacity,
+                        :price_per_hour,
+                        :contact_phone,
+                        :description,
+                        :image_url,
+                        :is_active
+                    )
+                    RETURNING
+                        venue_id,
+                        name,
+                        address,
+                        city,
+                        capacity,
+                        price_per_hour,
+                        contact_phone,
+                        description,
+                        image_url,
+                        is_active,
+                        created_at;
+                """)
+
+                params = {
+                    "name": venue.name.strip(),
+                    "address": venue.address.strip(),
+                    "city": venue.city.strip(),
+                    "capacity": venue.capacity,
+                    "price_per_hour": venue.price_per_hour,
+                    "contact_phone": venue.contact_phone,
+                    "description": venue.description,
+                    "image_url": venue.image_url,
+                    "is_active": True
+                }
+
+                row = conn.execute(
+                    q,
+                    params
+                ).mappings().one()
+
+                return {
+                    "message": "Venue added successfully",
+                    "venue": dict(row)
+                }
+
+        except IntegrityError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid venue data."
+            )
+
+        except Exception as e:
+            logger.warning(f"DB insert failed: {e}")
+
+            raise HTTPException(
+                status_code=500,
+                detail="Could not create venue."
+            )
+
+    raise HTTPException(
+        status_code=500,
+        detail="Database not connected"
+    )
+
+
+# PUT: Update a venue
+@app.put("/api/venues/{venue_id}")
+def update_venue(
+    venue_id: int,
+    venue_data: VenueUpdate
+):
+    """Update existing venue details."""
+
+    changes = venue_data.dict(exclude_unset=True)
+
+    if not changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No fields provided."
+        )
+
+    if "name" in changes and changes["name"] is not None:
+        changes["name"] = changes["name"].strip()
+
+    if "address" in changes and changes["address"] is not None:
+        changes["address"] = changes["address"].strip()
+
+    if "city" in changes and changes["city"] is not None:
+        changes["city"] = changes["city"].strip()
+
+    fields = {
+        "name",
+        "address",
+        "city",
+        "capacity",
+        "price_per_hour",
+        "contact_phone",
+        "description",
+        "image_url",
+        "is_active"
+    }
+
+    updates = {
+        key: value
+        for key, value in changes.items()
+        if key in fields
+    }
+
+    assignments = ", ".join(
+        f"{key} = :{key}"
+        for key in updates
+    )
+
+    try:
+        with engine.begin() as conn:
+
+            q = text(f"""
+                UPDATE venues
+                SET {assignments}
+                WHERE venue_id = :venue_id
+                RETURNING
+                    venue_id,
+                    name,
+                    address,
+                    city,
+                    capacity,
+                    price_per_hour,
+                    contact_phone,
+                    description,
+                    image_url,
+                    is_active,
+                    created_at;
+            """)
+
+            result = conn.execute(
+                q,
+                {
+                    **updates,
+                    "venue_id": venue_id
+                }
+            ).mappings().one_or_none()
+
+            if result is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Venue not found."
+                )
+
+            return {
+                "message": "Venue updated successfully",
+                "venue": dict(result)
+            }
+
+    except HTTPException:
+        raise
+
+    except IntegrityError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid venue data."
+        )
+
+    except Exception as e:
+        logger.warning(f"DB update failed: {e}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not update venue."
+        )
+
+
+# DELETE: Remove a venue
+@app.delete("/api/venues/{venue_id}")
+def delete_venue(venue_id: int):
+    """Delete a venue by ID."""
+
+    try:
+        with engine.begin() as conn:
+
+            q = text("""
+                DELETE FROM venues
+                WHERE venue_id = :id
+                RETURNING venue_id;
+            """)
+
+            deleted = conn.execute(
+                q,
+                {"id": venue_id}
+            ).scalar_one_or_none()
+
+            if deleted is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Venue not found."
+                )
+
+            return {
+                "message": "Venue deleted successfully",
+                "venue_id": venue_id
+            }
+
+    except HTTPException:
+        raise
+
+    except IntegrityError:
+        raise HTTPException(
+            status_code=400,
+            detail="Venue could not be deleted."
+        )
+
+    except Exception as e:
+        logger.warning(f"DB delete failed: {e}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not delete venue."
+        )
+
+
+# --------------------------------------------------------------------------
+# Venue Operating Hours
+# --------------------------------------------------------------------------
+
+# POST: Add operating hours for a venue
+@app.post(
+    "/api/venues/{venue_id}/operating-hours",
+    status_code=status.HTTP_201_CREATED
+)
+def create_operating_hours(
+    venue_id: int,
+    hours: OperatingHoursCreate
+):
+    """Add operating hours for a venue."""
+
+    try:
+        with engine.begin() as conn:
+
+            # Check that the venue exists
+            venue_exists = conn.execute(text("""
+                SELECT venue_id
+                FROM venues
+                WHERE venue_id = :venue_id;
+            """), {
+                "venue_id": venue_id
+            }).scalar_one_or_none()
+
+            if venue_exists is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Venue not found."
+                )
+
+            q = text("""
+                INSERT INTO venueoperatinghours
+                (
+                    venue_id,
+                    day_of_week,
+                    open_time,
+                    close_time,
+                    is_closed
+                )
+                VALUES
+                (
+                    :venue_id,
+                    :day_of_week,
+                    :open_time,
+                    :close_time,
+                    :is_closed
+                )
+                RETURNING
+                    hours_id,
+                    venue_id,
+                    day_of_week,
+                    open_time,
+                    close_time,
+                    is_closed;
+            """)
+
+            row = conn.execute(
+                q,
+                {
+                    "venue_id": venue_id,
+                    "day_of_week": hours.day_of_week,
+                    "open_time": hours.open_time,
+                    "close_time": hours.close_time,
+                    "is_closed": hours.is_closed
+                }
+            ).mappings().one()
+
+            return {
+                "message": "Operating hours added successfully",
+                "operating_hours": dict(row)
+            }
+
+    except HTTPException:
+        raise
+
+    except IntegrityError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid operating hours data."
+        )
+
+    except Exception as e:
+        logger.warning(f"DB insert failed: {e}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not add operating hours."
+        )
+
+
+# PUT: Update operating hours
+@app.put("/api/venues/operating-hours/{hours_id}")
+def update_operating_hours(
+    hours_id: int,
+    hours_data: OperatingHoursUpdate
+):
+    """Update existing venue operating hours."""
+
+    changes = hours_data.dict(exclude_unset=True)
+
+    if not changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No fields provided."
+        )
+
+    fields = {
+        "day_of_week",
+        "open_time",
+        "close_time",
+        "is_closed"
+    }
+
+    updates = {
+        key: value
+        for key, value in changes.items()
+        if key in fields
+    }
+
+    assignments = ", ".join(
+        f"{key} = :{key}"
+        for key in updates
+    )
+
+    try:
+        with engine.begin() as conn:
+
+            q = text(f"""
+                UPDATE venueoperatinghours
+                SET {assignments}
+                WHERE hours_id = :hours_id
+                RETURNING
+                    hours_id,
+                    venue_id,
+                    day_of_week,
+                    open_time,
+                    close_time,
+                    is_closed;
+            """)
+
+            row = conn.execute(
+                q,
+                {
+                    **updates,
+                    "hours_id": hours_id
+                }
+            ).mappings().one_or_none()
+
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Operating hours not found."
+                )
+
+            return {
+                "message": "Operating hours updated successfully",
+                "operating_hours": dict(row)
+            }
+
+    except HTTPException:
+        raise
+
+    except IntegrityError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid operating hours data."
+        )
+
+    except Exception as e:
+        logger.warning(f"DB update failed: {e}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not update operating hours."
+        )
