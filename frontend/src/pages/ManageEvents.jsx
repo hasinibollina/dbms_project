@@ -24,18 +24,11 @@ import ConfirmModal from '../components/ConfirmModal';
 import {
   SEED_EVENTS,
   SEED_VENUES,
+  SEED_CATEGORIES,
   getStoredEvents,
   saveStoredEvents,
   formatINR,
 } from '../data/seedData';
-
-const CATEGORIES = [
-  'Technology & AI',
-  'Music & Concerts',
-  'Business & Networking',
-  'Arts & Theatre',
-  'Workshops & Learning',
-];
 
 export default function ManageEvents() {
   const { user } = useAuth();
@@ -51,10 +44,10 @@ export default function ManageEvents() {
   const [editingEvent, setEditingEvent] = useState(null); // null = Create, object = Edit
   const [formData, setFormData] = useState({
     title: '',
-    category: 'Technology & AI',
-    venue: 'Apex Convention Center',
-    city: 'Bengaluru',
-    date: '',
+    category_id: 1,
+    venue_id: 1,
+    start_time: '',
+    end_time: '',
     ticket_price: '499',
     capacity: '500',
     description: '',
@@ -110,15 +103,28 @@ export default function ManageEvents() {
     });
   }, [userFilteredEvents, statusFilter, searchQuery]);
 
+  // Helper to format ISO to datetime-local value (YYYY-MM-DDTHH:mm)
+  const toInputDateTime = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   // Open modal for Create
   const handleOpenCreate = () => {
     setEditingEvent(null);
+    const nextWeek = new Date(Date.now() + 7 * 86400000);
+    nextWeek.setHours(10, 0, 0, 0);
+    const endNextWeek = new Date(nextWeek.getTime() + 6 * 3600000);
+
     setFormData({
       title: '',
-      category: 'Technology & AI',
-      venue: 'Apex Convention Center',
-      city: 'Bengaluru',
-      date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 16).replace('T', ' '),
+      category_id: 1,
+      venue_id: 1,
+      start_time: toInputDateTime(nextWeek),
+      end_time: toInputDateTime(endNextWeek),
       ticket_price: '499',
       capacity: '500',
       description: '',
@@ -132,11 +138,11 @@ export default function ManageEvents() {
     setEditingEvent(event);
     setFormData({
       title: event.title || '',
-      category: event.category || 'Technology & AI',
-      venue: event.venue || 'Apex Convention Center',
-      city: event.city || 'Bengaluru',
-      date: event.date || '',
-      ticket_price: String(event.ticket_price || 0),
+      category_id: event.category_id || 1,
+      venue_id: event.venue_id || 1,
+      start_time: toInputDateTime(event.start_time || event.date),
+      end_time: toInputDateTime(event.end_time || (event.start_time ? new Date(new Date(event.start_time).getTime() + 4 * 3600000) : '')),
+      ticket_price: String(event.ticket_price !== undefined ? event.ticket_price : (event.price || 0)),
       capacity: String(event.capacity || 100),
       description: event.description || '',
     });
@@ -144,23 +150,28 @@ export default function ManageEvents() {
     setModalOpen(true);
   };
 
-  // Handle Venue select change to update city automatically
-  const handleVenueChange = (e) => {
-    const selectedVenueName = e.target.value;
-    const foundVenue = SEED_VENUES.find((v) => v.name === selectedVenueName);
-    setFormData((prev) => ({
-      ...prev,
-      venue: selectedVenueName,
-      city: foundVenue ? foundVenue.city : prev.city,
-    }));
-  };
-
   const validateForm = () => {
     const errs = {};
-    if (!formData.title.trim()) errs.title = 'Event title is required';
-    if (!formData.date.trim()) errs.date = 'Date & time is required';
-    if (!formData.capacity || Number(formData.capacity) <= 0) {
-      errs.capacity = 'Capacity must be greater than 0';
+    if (!formData.title.trim()) {
+      errs.title = 'Event title is required';
+    } else if (formData.title.trim().length > 150) {
+      errs.title = 'Event title cannot exceed 150 characters';
+    }
+
+    if (!formData.start_time) {
+      errs.start_time = 'Start time is required';
+    }
+    if (!formData.end_time) {
+      errs.end_time = 'End time is required';
+    }
+    if (formData.start_time && formData.end_time) {
+      if (new Date(formData.end_time) <= new Date(formData.start_time)) {
+        errs.end_time = 'End time must be later than start time';
+      }
+    }
+
+    if (!formData.capacity || Number(formData.capacity) <= 0 || !Number.isInteger(Number(formData.capacity))) {
+      errs.capacity = 'Capacity must be an integer greater than 0';
     }
     if (formData.ticket_price === '' || Number(formData.ticket_price) < 0) {
       errs.ticket_price = 'Price cannot be negative';
@@ -173,6 +184,12 @@ export default function ManageEvents() {
     e.preventDefault();
     if (!validateForm()) return;
 
+    const matchedCategory = SEED_CATEGORIES.find((c) => c.category_id === Number(formData.category_id));
+    const matchedVenue = SEED_VENUES.find((v) => v.venue_id === Number(formData.venue_id));
+
+    const startTimeFormatted = formData.start_time.replace('T', ' ') + ':00';
+    const endTimeFormatted = formData.end_time.replace('T', ' ') + ':00';
+
     if (editingEvent) {
       // Update existing
       const updatedList = events.map((ev) => {
@@ -180,12 +197,17 @@ export default function ManageEvents() {
           return {
             ...ev,
             title: formData.title.trim(),
-            category: formData.category,
-            venue: formData.venue,
-            city: formData.city,
-            date: formData.date,
+            category_id: Number(formData.category_id),
+            category: matchedCategory ? matchedCategory.name : ev.category,
+            venue_id: Number(formData.venue_id),
+            venue: matchedVenue ? matchedVenue.name : ev.venue,
+            city: matchedVenue ? matchedVenue.city : ev.city,
+            start_time: startTimeFormatted,
+            end_time: endTimeFormatted,
+            date: startTimeFormatted,
             ticket_price: Number(formData.ticket_price),
-            capacity: Number(formData.capacity),
+            price: Number(formData.ticket_price),
+            capacity: parseInt(formData.capacity, 10),
             description: formData.description.trim(),
           };
         }
@@ -200,18 +222,23 @@ export default function ManageEvents() {
       const newEvent = {
         event_id: newId,
         title: formData.title.trim(),
-        category: formData.category,
-        venue: formData.venue,
-        city: formData.city,
-        date: formData.date,
+        category_id: Number(formData.category_id),
+        category: matchedCategory ? matchedCategory.name : 'Technology & AI',
+        venue_id: Number(formData.venue_id),
+        venue: matchedVenue ? matchedVenue.name : 'Apex Convention Center',
+        city: matchedVenue ? matchedVenue.city : 'Bengaluru',
+        start_time: startTimeFormatted,
+        end_time: endTimeFormatted,
+        date: startTimeFormatted,
         tickets_sold: 0,
-        capacity: Number(formData.capacity),
+        capacity: parseInt(formData.capacity, 10),
         ticket_price: Number(formData.ticket_price),
+        price: Number(formData.ticket_price),
         revenue: 0,
         status: 'Scheduled',
-        organizer: user?.name || user?.full_name || 'Arjun Mehta',
+        organizer: user?.full_name || user?.name || 'Arjun Mehta',
         organizer_id: user?.user_id || 2,
-        organizer_email: user?.email || 'organizer@eventilion.in',
+        organizer_email: user?.email || 'organizer@eventhub.com',
         description: formData.description.trim(),
       };
       const updatedList = [newEvent, ...events];
@@ -360,14 +387,17 @@ export default function ManageEvents() {
                         <div className="text-[10px] text-wine font-medium">{ev.city}</div>
                       </td>
 
-                      {/* Date */}
+                      {/* Start Time & End Time */}
                       <td className="p-4 text-ink/80 whitespace-nowrap">
-                        {ev.date}
+                        <div className="font-semibold text-ink">{ev.start_time || ev.date}</div>
+                        {ev.end_time && (
+                          <div className="text-[10px] text-ink/60 font-mono">to {ev.end_time}</div>
+                        )}
                       </td>
 
-                      {/* Price */}
+                      {/* Ticket Price */}
                       <td className="p-4 font-heading text-wine text-xs whitespace-nowrap">
-                        {ev.ticket_price > 0 ? `₹${ev.ticket_price}` : 'FREE'}
+                        {ev.ticket_price > 0 ? `₹${Number(ev.ticket_price).toLocaleString('en-IN')}` : 'FREE'}
                       </td>
 
                       {/* Tickets Sold / Capacity */}
@@ -483,6 +513,7 @@ export default function ManageEvents() {
                 <input
                   type="text"
                   required
+                  maxLength={150}
                   value={formData.title}
                   onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   placeholder="e.g. Future of Generative AI Summit"
@@ -491,20 +522,20 @@ export default function ManageEvents() {
                 {formErrors.title && <p className="text-xs text-red-700">{formErrors.title}</p>}
               </div>
 
-              {/* Category & Venue */}
+              {/* Category & Venue Foreign Keys */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Category
+                    Category (Foreign Key)
                   </label>
                   <select
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    value={formData.category_id}
+                    onChange={(e) => setFormData({ ...formData, category_id: Number(e.target.value) })}
                     className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                   >
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
+                    {SEED_CATEGORIES.map((c) => (
+                      <option key={c.category_id} value={c.category_id}>
+                        {c.name}
                       </option>
                     ))}
                   </select>
@@ -512,15 +543,15 @@ export default function ManageEvents() {
 
                 <div className="space-y-1">
                   <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Venue
+                    Venue (Foreign Key)
                   </label>
                   <select
-                    value={formData.venue}
-                    onChange={handleVenueChange}
+                    value={formData.venue_id}
+                    onChange={(e) => setFormData({ ...formData, venue_id: Number(e.target.value) })}
                     className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                   >
                     {SEED_VENUES.map((v) => (
-                      <option key={v.venue_id} value={v.name}>
+                      <option key={v.venue_id} value={v.venue_id}>
                         {v.name} ({v.city})
                       </option>
                     ))}
@@ -528,31 +559,47 @@ export default function ManageEvents() {
                 </div>
               </div>
 
-              {/* Date & Time */}
-              <div className="space-y-1">
-                <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                  Date & Time <span className="text-red-700">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.date}
-                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                  placeholder="YYYY-MM-DD HH:MM (e.g. 2026-11-20 10:00)"
-                  className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine"
-                />
-                {formErrors.date && <p className="text-xs text-red-700">{formErrors.date}</p>}
+              {/* Start Time & End Time (TIMESTAMPTZ) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
+                    Start Time <span className="text-red-700">*</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={formData.start_time}
+                    onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
+                    className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
+                  />
+                  {formErrors.start_time && <p className="text-xs text-red-700">{formErrors.start_time}</p>}
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
+                    End Time <span className="text-red-700">*</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={formData.end_time}
+                    onChange={(e) => setFormData({ ...formData, end_time: e.target.value })}
+                    className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
+                  />
+                  {formErrors.end_time && <p className="text-xs text-red-700">{formErrors.end_time}</p>}
+                </div>
               </div>
 
-              {/* Price & Capacity */}
+              {/* Ticket Price & Total Capacity */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Ticket Price (₹)
+                    Ticket Price (₹) <span className="text-red-700">*</span>
                   </label>
                   <input
                     type="number"
                     min="0"
+                    step="0.01"
                     value={formData.ticket_price}
                     onChange={(e) => setFormData({ ...formData, ticket_price: e.target.value })}
                     placeholder="0 for free"
@@ -565,11 +612,12 @@ export default function ManageEvents() {
 
                 <div className="space-y-1">
                   <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Total Capacity
+                    Total Capacity <span className="text-red-700">*</span>
                   </label>
                   <input
                     type="number"
                     min="1"
+                    step="1"
                     value={formData.capacity}
                     onChange={(e) => setFormData({ ...formData, capacity: e.target.value })}
                     className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
