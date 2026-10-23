@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy import text
 import logging
 from routes.auth import router as auth_router
+from booking import router as booking_router
 
 try:
     from backend.database import engine, get_db
@@ -27,6 +28,7 @@ app = FastAPI(
     version="1.0.0",
 )
 app.include_router(auth_router)
+app.include_router(booking_router)
 
 app.add_middleware(
     CORSMiddleware,

@@ -2,6 +2,8 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr
 from gotrue.errors import AuthApiError
+from fastapi import Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 try:
     from backend.supabase_client import supabase
@@ -10,6 +12,32 @@ except ImportError:
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
+security = HTTPBearer()
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    access_token = credentials.credentials
+
+    try:
+        result = supabase.auth.get_user(access_token)
+
+        user = result.user
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication token"
+            )
+
+        return user
+
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired authentication token"
+        )
 
 class LoginRequest(BaseModel):
     email: EmailStr
