@@ -380,15 +380,14 @@ def get_admin_events():
                         COALESCE(c.name, 'Uncategorized') AS category,
                         COALESCE(v.name, 'Unassigned') AS venue,
                         COALESCE(v.city, 'N/A') AS city,
-                        COALESCE(u.full_name, 'Admin') AS organizer,
+                        'Admin' AS organizer,
                         COALESCE(SUM(b.ticket_quantity), 0) AS tickets_sold,
                         COALESCE(SUM(b.total_amount), 0) AS revenue
                     FROM events e
                     LEFT JOIN categories c ON e.category_id = c.category_id
                     LEFT JOIN venues v ON e.venue_id = v.venue_id
-                    LEFT JOIN users u ON e.organizer_id = u.user_id
                     LEFT JOIN bookings b ON e.event_id = b.event_id
-                    GROUP BY e.event_id, e.title, e.start_time, e.end_time, e.ticket_price, e.capacity, e.status, c.name, v.name, v.city, u.full_name
+                    GROUP BY e.event_id, e.title, e.start_time, e.end_time, e.ticket_price, e.capacity, e.status, c.name, v.name, v.city
                     ORDER BY e.start_time DESC;
                 """)
                 rows = conn.execute(q).mappings().all()
