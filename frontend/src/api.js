@@ -69,13 +69,12 @@ function groupHours(rows) {
 }
 
 export const venuesApi = {
-  getAll: async () => {
-    const [venues, hours] = await Promise.all([
-      request('/api/venues'),
-      request('/api/venue-hours'),
-    ]);
-    const byVenue = groupHours(hours);
-    return (venues || []).map((v) => ({ ...v, hours: byVenue[v.venue_id] || [] }));
+    getAll: async () => {
+    const venues = await request('/api/venues');
+    return (venues || []).map((v) => ({
+      ...v,
+      hours: v.hours || [],
+    }));
   },
 
   getById: async (id) => {
