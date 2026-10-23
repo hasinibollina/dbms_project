@@ -860,12 +860,12 @@ def list_venues():
 
                 return [dict(r) for r in rows]
 
-        except Exception as e:
-    logger.exception("DB query failed")
-    raise HTTPException(
-        status_code=500,
-        detail=f"Venue query failed: {str(e)}"
-    )
+                except Exception as e:
+            logger.exception("DB query failed")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Venue query failed: {str(e)}"
+            )
 
     raise HTTPException(
         status_code=500,
