@@ -21,6 +21,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
+import { eventsApi } from '../api';
 import {
   SEED_EVENTS,
   SEED_VENUES,
