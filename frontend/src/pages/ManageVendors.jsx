@@ -74,8 +74,6 @@ const normalizedVendors = (Array.isArray(vendorRows) ? vendorRows : []).map((v) 
 }));
 
 setVendors(normalizedVendors);
-    setVendors(Array.isArray(vendorRows) ? vendorRows : []);
-
     try {
       const serviceRows = await servicesApi.getAll();
       setServices(Array.isArray(serviceRows) ? serviceRows : []);
