@@ -60,16 +60,24 @@ export default function ManageEvents() {
   const [eventToCancel, setEventToCancel] = useState(null);
 
   // Load events from localStorage or seed
-  const loadEvents = () => {
-    setLoading(true);
-    const stored = getStoredEvents();
-    setEvents(stored);
+  // Load events from the backend database
+const loadEvents = async () => {
+  setLoading(true);
+  try {
+    const data = await eventsApi.getAll();
+    setEvents(Array.isArray(data) ? data : []);
+  } catch (error) {
+    console.error('Failed to load events:', error);
+    toast.error('Failed to load events from the database.');
+    setEvents([]);
+  } finally {
     setLoading(false);
-  };
+  }
+};
 
-  useEffect(() => {
-    loadEvents();
-  }, []);
+useEffect(() => {
+  loadEvents();
+}, []);
 
   const isAdmin = user?.role?.toLowerCase() === 'admin';
 
