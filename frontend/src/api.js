@@ -140,16 +140,7 @@ export const authApi = {
 
 // Events API
 export const eventsApi = {
-  getAll: (params = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, val]) => {
-      if (val !== undefined && val !== null && val !== '') {
-        searchParams.set(key, val);
-      }
-    });
-    const query = searchParams.toString();
-    return request(`/events${query ? `?${query}` : ''}`);
-  },
+  getAll: () => request('/api/admin/events'),
 
   create: (eventData) => request('/events', {
     method: 'POST',
