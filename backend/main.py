@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from sqlalchemy import text
 import logging
-from routes.auth import router as auth_router
+from backend.routes.auth import router as auth_router
 
 try:
     from backend.database import engine, get_db
