@@ -63,6 +63,17 @@ export default function ManageVendors() {
 
   try {
     const vendorRows = await vendorsApi.getAll();
+
+const normalizedVendors = (Array.isArray(vendorRows) ? vendorRows : []).map((v) => ({
+  ...v,
+  vendor_name: v.vendor_name || v.name || '',
+  service_name: v.service_name || v.service_type || '',
+  service_description: v.service_description || '',
+  email: v.email || '',
+  created_at: v.created_at || null,
+}));
+
+setVendors(normalizedVendors);
     setVendors(Array.isArray(vendorRows) ? vendorRows : []);
 
     try {
