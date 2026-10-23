@@ -289,6 +289,7 @@ def is_db_connected():
             conn.execute(text("SELECT 1"))
             return True
     except Exception:
+        logger.exception("Database connection check failed")
         return False
 
 
