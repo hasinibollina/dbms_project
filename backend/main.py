@@ -835,11 +835,9 @@ def delete_vendor(vendor_id: int):
 @app.get("/api/venues")
 def list_venues():
     """Retrieve all venues."""
-
     if is_db_connected():
         try:
             with engine.connect() as conn:
-
                 q = text("""
                     SELECT
                         venue_id,
@@ -856,12 +854,9 @@ def list_venues():
                     FROM venues
                     ORDER BY venue_id;
                 """)
-
                 rows = conn.execute(q).mappings().all()
-
                 return [dict(r) for r in rows]
-
-                except Exception as e:
+        except Exception as e:
             logger.exception("DB query failed")
             raise HTTPException(
                 status_code=500,
@@ -872,7 +867,6 @@ def list_venues():
         status_code=500,
         detail="Database not connected"
     )
-
 
 # GET: View one venue
 @app.get("/api/venues/{venue_id}")
