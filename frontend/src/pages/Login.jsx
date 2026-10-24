@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Mail, Lock, LogIn, Sparkles } from 'lucide-react';
 import { authApi } from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -7,11 +7,12 @@ import { useToast } from '../context/ToastContext';
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const toast = useToast();
 
   const [formData, setFormData] = useState({
-    email: '',
+    email: location.state?.email || '',
     password: '',
   });
   const [loading, setLoading] = useState(false);
@@ -139,7 +140,7 @@ export default function Login() {
                 required
                 value={formData.email}
                 onChange={handleInputChange}
-                placeholder="name@eventilion.in"
+                placeholder="you@example.com"
                 className="w-full pl-11 pr-4 py-3 bg-sand-dark/30 border border-sand-dark rounded-xl text-sm font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all"
               />
             </div>
