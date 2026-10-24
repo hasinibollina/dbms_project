@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, LogIn, Sparkles, AlertCircle } from 'lucide-react';
+import { Mail, Lock, LogIn, Sparkles } from 'lucide-react';
 import { authApi } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { DEMO_ACCOUNTS } from '../data/seedData';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -17,7 +16,6 @@ export default function Login() {
   });
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [showDemoBanner, setShowDemoBanner] = useState(true);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -123,28 +121,6 @@ export default function Login() {
         </p>
       </div>
 
-      {/* Demonstration Mode Banner */}
-      {showDemoBanner && (
-        <div className="mb-6 p-4 rounded-xl bg-sand border border-sand-dark flex items-start gap-3 shadow-sm">
-          <AlertCircle className="w-5 h-5 text-wine flex-shrink-0 mt-0.5" />
-          <div className="text-xs text-ink/80">
-            <strong className="text-wine font-semibold block mb-1">
-              Demonstration Mode (DBMS Seed Accounts)
-            </strong>
-            <p className="text-ink/70 mb-2">
-              If the backend server is offline, use the verified seed accounts below:
-            </p>
-            <div className="space-y-1 font-mono text-[11px] bg-sand-dark/40 p-2.5 rounded-lg border border-sand-dark/60">
-              <div>
-                <strong className="text-wine">Admin:</strong> admin@eventilion.in / admin123
-              </div>
-              <div>
-                <strong className="text-wine">Organizer:</strong> organizer@eventilion.in / org123
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Login Card */}
       <div className="bg-sand rounded-2xl border border-sand-dark p-6 sm:p-8 shadow-poster space-y-6">
