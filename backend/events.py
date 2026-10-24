@@ -66,6 +66,12 @@ class EventUpdate(BaseModel):
     status: Optional[str] = None
 
 
+class EventVendorCreate(BaseModel):
+    vendor_id: int = Field(gt=0)
+    agreed_cost: Decimal = Field(default=Decimal("0"), ge=0)
+
+
+
 EVENT_COLUMNS = """
     event_id, title, description, organizer_id, category_id, venue_id,
     start_time, end_time, ticket_price, capacity, status, created_at
@@ -204,3 +210,250 @@ def delete_event(event_id: int, user=Depends(require_event_manager)):
     except Exception:
         logger.exception("Could not delete event")
         raise HTTPException(status_code=503, detail="Could not delete event")
+
+
+@router.get("/{event_id}/vendors")
+def get_event_vendors(
+    event_id: int,
+    user=Depends(require_event_manager),
+):
+    """List vendors selected for an event the user is allowed to manage."""
+    role = get_user_role(user)
+
+    try:
+        with engine.connect() as conn:
+            event = conn.execute(
+                text("""
+                    SELECT organizer_id
+                    FROM events
+                    WHERE event_id = :event_id
+                """),
+                {"event_id": event_id},
+            ).mappings().one_or_none()
+
+            if event is None:
+                raise HTTPException(status_code=404, detail="Event not found")
+
+            if role != "admin" and str(event["organizer_id"]) != str(user.id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only view vendors for your own events",
+                )
+
+            rows = conn.execute(
+                text("""
+                    SELECT
+                        ev.event_id,
+                        ev.vendor_id,
+                        v.vendor_name,
+                        ev.service_id,
+                        s.service_name,
+                        ev.agreed_cost,
+                        ev.booking_status,
+                        ev.created_at
+                    FROM event_vendors ev
+                    JOIN vendors v ON v.vendor_id = ev.vendor_id
+                    JOIN services s ON s.service_id = ev.service_id
+                    WHERE ev.event_id = :event_id
+                    ORDER BY s.service_name, v.vendor_name
+                """),
+                {"event_id": event_id},
+            ).mappings().all()
+
+            return [dict(row) for row in rows]
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Could not load event vendors")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not load event vendors",
+        )
+
+
+@router.post("/{event_id}/vendors", status_code=status.HTTP_201_CREATED)
+def add_vendor_to_event(
+    event_id: int,
+    data: EventVendorCreate,
+    user=Depends(require_event_manager),
+):
+    """Add a vendor, allowing at most one vendor per service per event."""
+    role = get_user_role(user)
+
+    try:
+        with engine.begin() as conn:
+            event = conn.execute(
+                text("""
+                    SELECT organizer_id
+                    FROM events
+                    WHERE event_id = :event_id
+                """),
+                {"event_id": event_id},
+            ).mappings().one_or_none()
+
+            if event is None:
+                raise HTTPException(status_code=404, detail="Event not found")
+
+            if role != "admin" and str(event["organizer_id"]) != str(user.id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only add vendors to your own events",
+                )
+
+            vendor = conn.execute(
+                text("""
+                    SELECT vendor_id, vendor_name, service_id
+                    FROM vendors
+                    WHERE vendor_id = :vendor_id
+                """),
+                {"vendor_id": data.vendor_id},
+            ).mappings().one_or_none()
+
+            if vendor is None:
+                raise HTTPException(status_code=404, detail="Vendor not found")
+
+            existing = conn.execute(
+                text("""
+                    SELECT v.vendor_name, s.service_name
+                    FROM event_vendors ev
+                    JOIN vendors v ON v.vendor_id = ev.vendor_id
+                    JOIN services s ON s.service_id = ev.service_id
+                    WHERE ev.event_id = :event_id
+                      AND ev.service_id = :service_id
+                """),
+                {
+                    "event_id": event_id,
+                    "service_id": vendor["service_id"],
+                },
+            ).mappings().first()
+
+            if existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"You have already selected a vendor for "
+                        f"{existing['service_name']}: {existing['vendor_name']}. "
+                        "Remove that vendor before selecting another."
+                    ),
+                )
+
+            row = conn.execute(
+                text("""
+                    INSERT INTO event_vendors (
+                        event_id,
+                        vendor_id,
+                        service_id,
+                        agreed_cost,
+                        booking_status
+                    )
+                    VALUES (
+                        :event_id,
+                        :vendor_id,
+                        :service_id,
+                        :agreed_cost,
+                        'pending'
+                    )
+                    RETURNING
+                        event_id,
+                        vendor_id,
+                        service_id,
+                        agreed_cost,
+                        booking_status,
+                        created_at
+                """),
+                {
+                    "event_id": event_id,
+                    "vendor_id": vendor["vendor_id"],
+                    "service_id": vendor["service_id"],
+                    "agreed_cost": data.agreed_cost,
+                },
+            ).mappings().one()
+
+            return {
+                "message": "Vendor added to event successfully",
+                "vendor_name": vendor["vendor_name"],
+                **dict(row),
+            }
+
+    except HTTPException:
+        raise
+    except IntegrityError as exc:
+        # The unique database constraint also protects against
+        # two simultaneous requests selecting the same service.
+        logger.info("Vendor selection conflicted with a database constraint: %s", exc)
+        raise HTTPException(
+            status_code=409,
+            detail="A vendor for this service is already selected for this event.",
+        )
+    except Exception:
+        logger.exception("Could not add vendor to event")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not add vendor to event",
+        )
+
+
+@router.delete("/{event_id}/vendors/{vendor_id}")
+def remove_vendor_from_event(
+    event_id: int,
+    vendor_id: int,
+    user=Depends(require_event_manager),
+):
+    """Remove a vendor selection without deleting the vendor itself."""
+    role = get_user_role(user)
+
+    try:
+        with engine.begin() as conn:
+            event = conn.execute(
+                text("""
+                    SELECT organizer_id
+                    FROM events
+                    WHERE event_id = :event_id
+                """),
+                {"event_id": event_id},
+            ).mappings().one_or_none()
+
+            if event is None:
+                raise HTTPException(status_code=404, detail="Event not found")
+
+            if role != "admin" and str(event["organizer_id"]) != str(user.id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only remove vendors from your own events",
+                )
+
+            deleted = conn.execute(
+                text("""
+                    DELETE FROM event_vendors
+                    WHERE event_id = :event_id
+                      AND vendor_id = :vendor_id
+                    RETURNING vendor_id
+                """),
+                {
+                    "event_id": event_id,
+                    "vendor_id": vendor_id,
+                },
+            ).scalar_one_or_none()
+
+            if deleted is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="This vendor is not selected for this event",
+                )
+
+            return {
+                "message": "Vendor removed from event successfully",
+                "event_id": event_id,
+                "vendor_id": vendor_id,
+            }
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Could not remove vendor from event")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not remove vendor from event",
+        )
+
