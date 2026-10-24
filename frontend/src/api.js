@@ -69,13 +69,12 @@ function groupHours(rows) {
 }
 
 export const venuesApi = {
-  getAll: async () => {
-    const [venues, hours] = await Promise.all([
-      request('/api/venues'),
-      request('/api/venue-hours'),
-    ]);
-    const byVenue = groupHours(hours);
-    return (venues || []).map((v) => ({ ...v, hours: byVenue[v.venue_id] || [] }));
+    getAll: async () => {
+    const venues = await request('/api/venues');
+    return (venues || []).map((v) => ({
+      ...v,
+      hours: v.hours || [],
+    }));
   },
 
   getById: async (id) => {
@@ -141,16 +140,7 @@ export const authApi = {
 
 // Events API
 export const eventsApi = {
-  getAll: (params = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, val]) => {
-      if (val !== undefined && val !== null && val !== '') {
-        searchParams.set(key, val);
-      }
-    });
-    const query = searchParams.toString();
-    return request(`/events${query ? `?${query}` : ''}`);
-  },
+  getAll: () => request('/api/admin/events'),
 
   create: (eventData) => request('/events', {
     method: 'POST',

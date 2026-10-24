@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 try:
-    from routes.auth import get_current_user
+    from backend.routes.auth import get_current_user
 except ImportError:
     from routes.auth import get_current_user
 
