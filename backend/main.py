@@ -194,7 +194,8 @@ def get_admin_stats():
 
 @app.get("/api/admin/events")
 def get_admin_events():
-    """All events with category, venue, tickets sold and revenue (JOIN + GROUP BY)."""
+    """All events with category, venue, tickets sold and revenue (JOIN + GROUP BY).
+    Also returns category/venue/city/organizer aliases used by the Events and Manage Events pages."""
     try:
         with engine.connect() as conn:
             rows = conn.execute(text("""
@@ -203,6 +204,10 @@ def get_admin_events():
                        c.name AS category_name,
                        v.name AS venue_name,
                        v.city AS venue_city,
+                       COALESCE(c.name, 'Uncategorized') AS category,
+                       COALESCE(v.name, 'Unassigned')    AS venue,
+                       COALESCE(v.city, 'N/A')           AS city,
+                       'Admin'                           AS organizer,
                        COALESCE(SUM(b.ticket_quantity) FILTER (WHERE b.status <> 'cancelled'), 0) AS tickets_sold,
                        COALESCE(SUM(b.total_amount)   FILTER (WHERE b.status <> 'cancelled'), 0) AS revenue
                 FROM events e
