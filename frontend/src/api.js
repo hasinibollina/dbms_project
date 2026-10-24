@@ -95,7 +95,9 @@ function groupHours(rows) {
 
 export const venuesApi = {
     getAll: async () => {
-    const venues = await request('/api/venues');
+    // Trailing slash matters: the backend route is /api/venues/ and browsers
+    // refuse the redirect FastAPI sends for /api/venues on authenticated requests.
+    const venues = await request('/api/venues/');
     return (venues || []).map((v) => ({
       ...v,
       hours: v.hours || [],
@@ -111,7 +113,7 @@ export const venuesApi = {
   },
 
   // Backend responds with { message, venue }
-  create: async (venueData) => (await request('/api/venues', { method: 'POST', body: venueData })).venue,
+  create: async (venueData) => (await request('/api/venues/', { method: 'POST', body: venueData })).venue,
 
   update: async (id, venueData) =>
     (await request(`/api/venues/${id}`, { method: 'PUT', body: venueData })).venue,
