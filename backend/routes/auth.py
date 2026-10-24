@@ -1,6 +1,5 @@
-
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from gotrue.errors import AuthApiError
 from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -45,6 +44,7 @@ class LoginRequest(BaseModel):
 
 
 class SignupRequest(BaseModel):
+    full_name: str = Field(min_length=1, max_length=100)
     email: EmailStr
     password: str
 
@@ -86,6 +86,11 @@ def signup(request: SignupRequest):
         result = supabase.auth.sign_up({
             "email": request.email,
             "password": request.password,
+            "options": {
+                "data": {
+                    "full_name": request.full_name,
+                }
+            },
         })
 
         return {
