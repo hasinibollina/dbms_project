@@ -12,7 +12,20 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 import logging
-from backend.routes.auth import router as auth_router
+try:
+    from backend.routes.auth import router as auth_router
+except ImportError:
+    from routes.auth import router as auth_router
+
+try:
+    from backend.bookings import router as booking_router
+except ImportError:
+    from bookings import router as booking_router
+
+try:
+    from backend.reviews import router as reviews_router
+except ImportError:
+    from reviews import router as reviews_router
 
 try:
     from backend.database import engine, get_db
@@ -28,6 +41,8 @@ app = FastAPI(
     version="1.0.0",
 )
 app.include_router(auth_router)
+app.include_router(booking_router)
+app.include_router(reviews_router)
 
 app.add_middleware(
     CORSMiddleware,
