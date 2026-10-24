@@ -165,21 +165,25 @@ export const authApi = {
   }),
 };
 
-// Events API
+// Events API (backend: backend/events.py, prefix /api/events)
 export const eventsApi = {
-  getAll: () => request('/api/admin/events'),
+  // Public list of all events (with category, venue and city names)
+  getAll: () => request('/api/events'),
 
-  create: (eventData) => request('/events', {
+  // Only the logged-in user's own events (needs login)
+  getMine: () => request('/api/events/mine'),
+
+  create: (eventData) => request('/api/events', {
     method: 'POST',
     body: eventData,
   }),
 
-  update: (id, eventData) => request(`/events/${id}`, {
+  update: (id, eventData) => request(`/api/events/${id}`, {
     method: 'PUT',
     body: eventData,
   }),
 
-  delete: (id) => request(`/events/${id}`, {
+  delete: (id) => request(`/api/events/${id}`, {
     method: 'DELETE',
   }),
 };
