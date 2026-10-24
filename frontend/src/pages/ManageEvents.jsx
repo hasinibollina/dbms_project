@@ -21,22 +21,32 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
-import { eventsApi } from '../api';
-import {
-  SEED_EVENTS,
-  SEED_VENUES,
-  SEED_CATEGORIES,
-  getStoredEvents,
-  saveStoredEvents,
-  formatINR,
-} from '../data/seedData';
+import { eventsApi, categoriesApi, venuesApi } from '../api';
+// Values allowed by the events.status CHECK constraint in the database
+const STATUS_TABS = [
+  { value: 'All', label: 'All' },
+  { value: 'published', label: 'Published' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+const STATUS_STYLES = {
+  published: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
+  draft: 'bg-amber-100 text-amber-900 border border-amber-300',
+  completed: 'bg-sand-dark text-ink border border-sand-dark',
+  cancelled: 'bg-red-100 text-red-800 border border-red-300',
+};
 
 export default function ManageEvents() {
   const { user } = useAuth();
   const toast = useToast();
 
   const [events, setEvents] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [venues, setVenues] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
@@ -60,20 +70,27 @@ export default function ManageEvents() {
   const [eventToCancel, setEventToCancel] = useState(null);
 
   // Load events from localStorage or seed
-  // Load events from the backend database
-const loadEvents = async () => {
-  setLoading(true);
-  try {
-    const data = await eventsApi.getAll();
-    setEvents(Array.isArray(data) ? data : []);
-  } catch (error) {
-    console.error('Failed to load events:', error);
-    toast.error('Failed to load events from the database.');
-    setEvents([]);
-  } finally {
-    setLoading(false);
-  }
-};
+  // Only the logged-in user's own events (GET /api/events/mine).
+  // Admins see every event in the Admin Panel instead.
+  const loadEvents = async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const [mine, categoryRows, venueRows] = await Promise.all([
+        eventsApi.getMine(),
+        categoriesApi.getAll().catch(() => []),
+        venuesApi.getAll().catch(() => []),
+      ]);
+      setEvents(Array.isArray(mine) ? mine : []);
+      setCategories(Array.isArray(categoryRows) ? categoryRows : []);
+      setVenues(Array.isArray(venueRows) ? venueRows.filter((v) => v.is_active !== false) : []);
+    } catch (err) {
+      setEvents([]);
+      setLoadError(err.message || 'Could not load your events.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
 useEffect(() => {
   loadEvents();
@@ -81,36 +98,17 @@ useEffect(() => {
 
   const isAdmin = user?.role?.toLowerCase() === 'admin';
 
-  // Filter events based on role:
-  // Admin sees ALL events. Organizer sees only their OWN events.
-  const userFilteredEvents = useMemo(() => {
-    if (isAdmin) return events;
-    // Organizer filter
-    return events.filter(
-      (e) =>
-        e.organizer_id === user?.user_id ||
-        e.organizer_email?.toLowerCase() === user?.email?.toLowerCase() ||
-        e.organizer?.toLowerCase() === (user?.name || user?.full_name)?.toLowerCase()
-    );
-  }, [events, isAdmin, user]);
-
-  // Search & Status Filter
   const displayedEvents = useMemo(() => {
-    return userFilteredEvents.filter((e) => {
-      if (statusFilter !== 'All' && e.status !== statusFilter) {
-        return false;
-      }
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchTitle = e.title?.toLowerCase().includes(q);
-        const matchVenue = e.venue?.toLowerCase().includes(q);
-        const matchOrg = e.organizer?.toLowerCase().includes(q);
-        const matchCat = e.category?.toLowerCase().includes(q);
-        if (!matchTitle && !matchVenue && !matchOrg && !matchCat) return false;
+    const q = searchQuery.trim().toLowerCase();
+    return events.filter((e) => {
+      if (statusFilter !== 'All' && e.status !== statusFilter) return false;
+      if (q) {
+        const haystack = [e.title, e.venue, e.city, e.category].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [userFilteredEvents, statusFilter, searchQuery]);
+  }, [events, statusFilter, searchQuery]);
 
   // Helper to format ISO to datetime-local value (YYYY-MM-DDTHH:mm)
   const toInputDateTime = (dateStr) => {
