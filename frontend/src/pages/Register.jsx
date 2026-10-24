@@ -18,12 +18,16 @@ export default function Register() {
   });
   const [loading, setLoading] = useState(false);
   const [formErrors, setFormErrors] = useState({});
+  const [serverError, setServerError] = useState('');
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
     if (formErrors[name]) {
       setFormErrors((prev) => ({ ...prev, [name]: null }));
+    }
+    if (serverError) {
+      setServerError('');
     }
   };
 
@@ -59,29 +63,24 @@ export default function Register() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setServerError('');
+
     if (!validate()) return;
 
     setLoading(true);
     try {
+      const emailTrimmed = formData.email.trim().toLowerCase();
       const payload = {
         full_name: formData.full_name.trim(),
-        email: formData.email.trim(),
+        email: emailTrimmed,
         password: formData.password,
       };
 
       const response = await authApi.register(payload);
-      const userObject = response?.user || response || {
-        ...payload,
-        user_id: Math.floor(100 + Math.random() * 900),
-      };
-
-      login(userObject);
-      toast.success(`Account created successfully! Welcome, ${userObject.full_name}!`);
-      navigate('/');
+      toast.success('Account created successfully! Please sign in.');
+      navigate('/login', { state: { email: emailTrimmed } });
     } catch (err) {
-      console.warn('POST /users/register failed:', err.message);
-      // Show error toast as required: "show an error toast if the API is not ready"
-      toast.error(`Registration API Error: ${err.message || 'Authentication server offline'}`);
+      setServerError(err.message || 'Unable to register with these credentials');
     } finally {
       setLoading(false);
     }
@@ -214,6 +213,16 @@ export default function Register() {
             )}
           </div>
 
+          {/* Backend error display above button */}
+          {serverError && (
+            <div
+              id="register-error-message"
+              className="p-3 rounded-xl bg-red-100 border border-red-300 text-red-800 text-xs font-bold text-center animate-fadeIn"
+            >
+              {serverError}
+            </div>
+          )}
+
           {/* Submit Button */}
           <button
             type="submit"
@@ -223,7 +232,7 @@ export default function Register() {
             }`}
           >
             <UserPlus className="w-4 h-4" />
-            <span>{loading ? 'Creating Account...' : 'Register'}</span>
+            <span>{loading ? 'Creating Account…' : 'Sign Up'}</span>
           </button>
         </form>
 
