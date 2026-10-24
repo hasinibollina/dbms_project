@@ -14,6 +14,7 @@ export default function Register() {
     full_name: '',
     email: '',
     password: '',
+    confirm_password: '',
   });
   const [loading, setLoading] = useState(false);
   const [formErrors, setFormErrors] = useState({});
@@ -28,11 +29,30 @@ export default function Register() {
 
   const validate = () => {
     const errors = {};
-    if (!formData.full_name.trim()) errors.full_name = 'Full name is required';
-    if (!formData.email.trim()) errors.email = 'Email address is required';
-    if (!formData.password || formData.password.length < 6) {
-      errors.password = 'Password must be at least 6 characters';
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!formData.full_name.trim()) {
+      errors.full_name = 'Full name is required';
     }
+
+    if (!formData.email.trim()) {
+      errors.email = 'Email address is required';
+    } else if (!emailRegex.test(formData.email.trim())) {
+      errors.email = 'Please enter a valid email address';
+    }
+
+    if (!formData.password) {
+      errors.password = 'Password is required';
+    } else if (formData.password.length < 8) {
+      errors.password = 'Password must be at least 8 characters';
+    }
+
+    if (!formData.confirm_password) {
+      errors.confirm_password = 'Confirm password is required';
+    } else if (formData.password !== formData.confirm_password) {
+      errors.confirm_password = 'Passwords must match';
+    }
+
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -128,7 +148,7 @@ export default function Register() {
                 maxLength={150}
                 value={formData.email}
                 onChange={handleInputChange}
-                placeholder="name@example.com"
+                placeholder="you@example.com"
                 className={`w-full pl-11 pr-4 py-3 bg-sand-dark/30 border rounded-xl text-sm font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all ${
                   formErrors.email ? 'border-red-500 ring-1 ring-red-500' : 'border-sand-dark'
                 }`}
@@ -154,7 +174,7 @@ export default function Register() {
                 required
                 value={formData.password}
                 onChange={handleInputChange}
-                placeholder="Minimum 6 characters"
+                placeholder="Minimum 8 characters"
                 className={`w-full pl-11 pr-4 py-3 bg-sand-dark/30 border rounded-xl text-sm font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all ${
                   formErrors.password ? 'border-red-500 ring-1 ring-red-500' : 'border-sand-dark'
                 }`}
@@ -167,6 +187,32 @@ export default function Register() {
           </div>
 
 
+
+          {/* Confirm Password */}
+          <div className="space-y-1.5">
+            <label htmlFor="reg-confirm-password" className="block text-xs font-heading uppercase tracking-wider text-ink">
+              Confirm Password <span className="text-red-700">*</span>
+            </label>
+            <div className="relative">
+              <Lock className="w-4 h-4 text-wine absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                id="reg-confirm-password"
+                name="confirm_password"
+                type="password"
+                required
+                value={formData.confirm_password}
+                onChange={handleInputChange}
+                placeholder="Re-enter password"
+                className={`w-full pl-11 pr-4 py-3 bg-sand-dark/30 border rounded-xl text-sm font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all ${
+                  formErrors.confirm_password ? 'border-red-500 ring-1 ring-red-500' : 'border-sand-dark'
+                }`}
+                aria-invalid={Boolean(formErrors.confirm_password)}
+              />
+            </div>
+            {formErrors.confirm_password && (
+              <p className="text-xs text-red-700 font-semibold">{formErrors.confirm_password}</p>
+            )}
+          </div>
 
           {/* Submit Button */}
           <button
