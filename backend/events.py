@@ -72,6 +72,26 @@ class EventVendorCreate(BaseModel):
 
 
 
+# Event rows with category/venue names and ticket totals, used by the list endpoints
+EVENT_LIST_SQL = """
+    SELECT e.event_id, e.title, e.description, e.organizer_id,
+           e.category_id, e.venue_id, e.start_time, e.end_time,
+           e.ticket_price, e.capacity, e.status, e.created_at,
+           COALESCE(c.name, 'Uncategorized') AS category,
+           COALESCE(v.name, 'Unassigned')    AS venue,
+           COALESCE(v.city, 'N/A')           AS city,
+           COALESCE(SUM(b.ticket_quantity) FILTER (WHERE b.status <> 'cancelled'), 0) AS tickets_sold,
+           COALESCE(SUM(b.total_amount)   FILTER (WHERE b.status <> 'cancelled'), 0) AS revenue
+    FROM events e
+    LEFT JOIN categories c ON c.category_id = e.category_id
+    LEFT JOIN venues     v ON v.venue_id    = e.venue_id
+    LEFT JOIN bookings   b ON b.event_id    = e.event_id
+    {where}
+    GROUP BY e.event_id, c.name, v.name, v.city
+    ORDER BY e.start_time
+"""
+
+
 EVENT_COLUMNS = """
     event_id, title, description, organizer_id, category_id, venue_id,
     start_time, end_time, ticket_price, capacity, status, created_at
@@ -80,12 +100,10 @@ EVENT_COLUMNS = """
 
 @router.get("")
 def list_events():
-    """List events."""
+    """Public list of all events with category, venue and city names."""
     try:
         with engine.connect() as conn:
-            rows = conn.execute(
-                text(f"SELECT {EVENT_COLUMNS} FROM events ORDER BY start_time")
-            ).mappings().all()
+            rows = conn.execute(text(EVENT_LIST_SQL.format(where=""))).mappings().all()
             return [dict(row) for row in rows]
     except Exception:
         logger.exception("Could not list events")
