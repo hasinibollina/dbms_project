@@ -51,7 +51,7 @@ class EventCreate(BaseModel):
     end_time: datetime
     ticket_price: Decimal = Field(ge=0)
     capacity: int = Field(gt=0)
-    status: str = "upcoming"
+    status: str = "published"
 
 
 class EventUpdate(BaseModel):
@@ -456,4 +456,3 @@ def remove_vendor_from_event(
             status_code=503,
             detail="Could not remove vendor from event",
         )
-
