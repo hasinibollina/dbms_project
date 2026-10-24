@@ -22,6 +22,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
 import { eventsApi, categoriesApi, venuesApi } from '../api';
+
 // Values allowed by the events.status CHECK constraint in the database
 const STATUS_TABS = [
   { value: 'All', label: 'All' },
@@ -36,6 +37,18 @@ const STATUS_STYLES = {
   draft: 'bg-amber-100 text-amber-900 border border-amber-300',
   completed: 'bg-sand-dark text-ink border border-sand-dark',
   cancelled: 'bg-red-100 text-red-800 border border-red-300',
+};
+
+const EMPTY_FORM = {
+  title: '',
+  category_id: '',
+  venue_id: '',
+  start_time: '',
+  end_time: '',
+  ticket_price: '499',
+  capacity: '500',
+  status: 'published',
+  description: '',
 };
 
 function formatDateTime(value) {
@@ -72,26 +85,20 @@ export default function ManageEvents() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
-  // Modal states for Create / Edit
+  // Create / Edit modal
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null); // null = Create, object = Edit
-  const [formData, setFormData] = useState({
-    title: '',
-    category_id: 1,
-    venue_id: 1,
-    start_time: '',
-    end_time: '',
-    ticket_price: '499',
-    capacity: '500',
-    description: '',
-  });
+  const [formData, setFormData] = useState(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
-  // Cancel Event Confirmation Modal state
+  // Cancel confirmation modal
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [eventToCancel, setEventToCancel] = useState(null);
 
-  // Load events from localStorage or seed
+
+  const isAdmin = user?.role?.toLowerCase() === 'admin';
+
   // Only the logged-in user's own events (GET /api/events/mine).
   // Admins see every event in the Admin Panel instead.
   const loadEvents = async () => {
@@ -114,11 +121,9 @@ export default function ManageEvents() {
     }
   };
 
-useEffect(() => {
-  loadEvents();
-}, []);
-
-  const isAdmin = user?.role?.toLowerCase() === 'admin';
+  useEffect(() => {
+    loadEvents();
+  }, []);
 
   const displayedEvents = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -132,39 +137,33 @@ useEffect(() => {
     });
   }, [events, statusFilter, searchQuery]);
 
-
-  // Open modal for Create
   const handleOpenCreate = () => {
     setEditingEvent(null);
     const nextWeek = new Date(Date.now() + 7 * 86400000);
     nextWeek.setHours(10, 0, 0, 0);
     const endNextWeek = new Date(nextWeek.getTime() + 6 * 3600000);
-
     setFormData({
-      title: '',
-      category_id: 1,
-      venue_id: 1,
+      ...EMPTY_FORM,
+      category_id: categories[0] ? String(categories[0].category_id) : '',
+      venue_id: venues[0] ? String(venues[0].venue_id) : '',
       start_time: toInputDateTime(nextWeek),
       end_time: toInputDateTime(endNextWeek),
-      ticket_price: '499',
-      capacity: '500',
-      description: '',
     });
     setFormErrors({});
     setModalOpen(true);
   };
 
-  // Open modal for Edit
   const handleOpenEdit = (event) => {
     setEditingEvent(event);
     setFormData({
       title: event.title || '',
-      category_id: event.category_id || 1,
-      venue_id: event.venue_id || 1,
-      start_time: toInputDateTime(event.start_time || event.date),
-      end_time: toInputDateTime(event.end_time || (event.start_time ? new Date(new Date(event.start_time).getTime() + 4 * 3600000) : '')),
-      ticket_price: String(event.ticket_price !== undefined ? event.ticket_price : (event.price || 0)),
-      capacity: String(event.capacity || 100),
+      category_id: event.category_id ? String(event.category_id) : '',
+      venue_id: event.venue_id ? String(event.venue_id) : '',
+      start_time: toInputDateTime(event.start_time),
+      end_time: toInputDateTime(event.end_time),
+      ticket_price: String(event.ticket_price ?? 0),
+      capacity: String(event.capacity ?? ''),
+      status: event.status || 'published',
       description: event.description || '',
     });
     setFormErrors({});
@@ -173,115 +172,73 @@ useEffect(() => {
 
   const validateForm = () => {
     const errs = {};
-    if (!formData.title.trim()) {
-      errs.title = 'Event title is required';
-    } else if (formData.title.trim().length > 150) {
-      errs.title = 'Event title cannot exceed 150 characters';
+    const title = formData.title.trim();
+    if (!title) errs.title = 'Event title is required';
+    else if (title.length > 150) errs.title = 'Event title cannot exceed 150 characters';
+    if (!formData.start_time) errs.start_time = 'Start time is required';
+    if (!formData.end_time) errs.end_time = 'End time is required';
+    if (formData.start_time && formData.end_time && new Date(formData.end_time) <= new Date(formData.start_time)) {
+      errs.end_time = 'End time must be later than start time';
     }
-
-    if (!formData.start_time) {
-      errs.start_time = 'Start time is required';
-    }
-    if (!formData.end_time) {
-      errs.end_time = 'End time is required';
-    }
-    if (formData.start_time && formData.end_time) {
-      if (new Date(formData.end_time) <= new Date(formData.start_time)) {
-        errs.end_time = 'End time must be later than start time';
-      }
-    }
-
-    if (!formData.capacity || Number(formData.capacity) <= 0 || !Number.isInteger(Number(formData.capacity))) {
-      errs.capacity = 'Capacity must be an integer greater than 0';
-    }
-    if (formData.ticket_price === '' || Number(formData.ticket_price) < 0) {
-      errs.ticket_price = 'Price cannot be negative';
-    }
+    const capacity = Number(formData.capacity);
+    if (!Number.isInteger(capacity) || capacity <= 0) errs.capacity = 'Capacity must be a whole number above 0';
+    if (formData.ticket_price === '' || Number(formData.ticket_price) < 0) errs.ticket_price = 'Price cannot be negative';
     setFormErrors(errs);
     return Object.keys(errs).length === 0;
   };
 
-  const handleFormSubmit = (e) => {
+  const handleFormSubmit = async (e) => {
     e.preventDefault();
     if (!validateForm()) return;
 
-    const matchedCategory = SEED_CATEGORIES.find((c) => c.category_id === Number(formData.category_id));
-    const matchedVenue = SEED_VENUES.find((v) => v.venue_id === Number(formData.venue_id));
+    const payload = {
+      title: formData.title.trim(),
+      description: formData.description.trim() || null,
+      category_id: formData.category_id ? Number(formData.category_id) : null,
+      venue_id: formData.venue_id ? Number(formData.venue_id) : null,
+      // datetime-local is the viewer's local time; send it as a full ISO timestamp
+      start_time: new Date(formData.start_time).toISOString(),
+      end_time: new Date(formData.end_time).toISOString(),
+      ticket_price: Number(formData.ticket_price),
+      capacity: parseInt(formData.capacity, 10),
+      status: formData.status,
+    };
 
-    const startTimeFormatted = formData.start_time.replace('T', ' ') + ':00';
-    const endTimeFormatted = formData.end_time.replace('T', ' ') + ':00';
-
-    if (editingEvent) {
-      // Update existing
-      const updatedList = events.map((ev) => {
-        if (ev.event_id === editingEvent.event_id) {
-          return {
-            ...ev,
-            title: formData.title.trim(),
-            category_id: Number(formData.category_id),
-            category: matchedCategory ? matchedCategory.name : ev.category,
-            venue_id: Number(formData.venue_id),
-            venue: matchedVenue ? matchedVenue.name : ev.venue,
-            city: matchedVenue ? matchedVenue.city : ev.city,
-            start_time: startTimeFormatted,
-            end_time: endTimeFormatted,
-            date: startTimeFormatted,
-            ticket_price: Number(formData.ticket_price),
-            price: Number(formData.ticket_price),
-            capacity: parseInt(formData.capacity, 10),
-            description: formData.description.trim(),
-          };
-        }
-        return ev;
-      });
-      setEvents(updatedList);
-      saveStoredEvents(updatedList);
-      toast.success(`Event "${formData.title}" updated successfully!`);
-    } else {
-      // Create new
-      const newId = Math.max(...events.map((e) => e.event_id), 100) + 1;
-      const newEvent = {
-        event_id: newId,
-        title: formData.title.trim(),
-        category_id: Number(formData.category_id),
-        category: matchedCategory ? matchedCategory.name : 'Technology & AI',
-        venue_id: Number(formData.venue_id),
-        venue: matchedVenue ? matchedVenue.name : 'Apex Convention Center',
-        city: matchedVenue ? matchedVenue.city : 'Bengaluru',
-        start_time: startTimeFormatted,
-        end_time: endTimeFormatted,
-        date: startTimeFormatted,
-        tickets_sold: 0,
-        capacity: parseInt(formData.capacity, 10),
-        ticket_price: Number(formData.ticket_price),
-        price: Number(formData.ticket_price),
-        revenue: 0,
-        status: 'Scheduled',
-        organizer: user?.full_name || user?.name || 'Arjun Mehta',
-        organizer_id: user?.user_id || 2,
-        organizer_email: user?.email || 'organizer@eventhub.com',
-        description: formData.description.trim(),
-      };
-      const updatedList = [newEvent, ...events];
-      setEvents(updatedList);
-      saveStoredEvents(updatedList);
-      toast.success(`Event "${newEvent.title}" created successfully!`);
+    setSaving(true);
+    try {
+      if (editingEvent) {
+        await eventsApi.update(editingEvent.event_id, payload);
+        toast.success(`Event "${payload.title}" updated.`);
+      } else {
+        await eventsApi.create(payload);
+        toast.success(`Event "${payload.title}" created.`);
+      }
+      setModalOpen(false);
+      await loadEvents();
+    } catch (err) {
+      toast.error(`Could not save event: ${err.message}`);
+    } finally {
+      setSaving(false);
     }
-
-    setModalOpen(false);
   };
 
-  // Cancel Event Confirmation
-  const confirmCancelEvent = () => {
+  // Cancelling sets status = 'cancelled' (the row is kept, not deleted)
+  const confirmCancelEvent = async () => {
     if (!eventToCancel) return;
-    const updated = events.map((ev) =>
-      ev.event_id === eventToCancel.event_id ? { ...ev, status: 'Cancelled' } : ev
-    );
-    setEvents(updated);
-    saveStoredEvents(updated);
-    toast.info(`Event "${eventToCancel.title}" has been cancelled.`);
-    setCancelModalOpen(false);
-    setEventToCancel(null);
+    setCancelling(true);
+    try {
+      await eventsApi.update(eventToCancel.event_id, { status: 'cancelled' });
+      setEvents((prev) =>
+        prev.map((ev) => (ev.event_id === eventToCancel.event_id ? { ...ev, status: 'cancelled' } : ev))
+      );
+      toast.success(`Event "${eventToCancel.title}" cancelled.`);
+      setCancelModalOpen(false);
+      setEventToCancel(null);
+    } catch (err) {
+      toast.error(`Could not cancel event: ${err.message}`);
+    } finally {
+      setCancelling(false);
+    }
   };
 
   return (
@@ -291,15 +248,14 @@ useEffect(() => {
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sand-dark/60 text-wine text-xs font-heading uppercase tracking-wider mb-2">
             <Calendar className="w-3.5 h-3.5" />
-            <span>{isAdmin ? 'Admin Master Event Control' : 'Organizer Workspace'}</span>
+            <span>{isAdmin ? 'Admin Workspace' : 'Organizer Workspace'}</span>
           </div>
           <h1 className="font-heading text-4xl sm:text-5xl md:text-6xl uppercase tracking-tighter text-ink">
             MANAGE EVENTS
           </h1>
           <p className="text-ink/70 text-sm sm:text-base mt-1 max-w-2xl">
-            {isAdmin
-              ? 'Oversee all platform events across all organizers, review ticket distributions, and adjust lifecycle statuses.'
-              : `Manage your scheduled events, ticket capacities, and staging venues as ${user?.full_name || 'Organizer'}.`}
+            Events you created{user?.name ? ` as ${user.name}` : ''}. Other organizers' events are not shown here
+            {isAdmin ? ' — see the Admin Panel for all events' : ''}.
           </p>
         </div>
 
@@ -321,27 +277,37 @@ useEffect(() => {
             className="p-3 rounded-xl border border-sand-dark bg-sand text-ink hover:bg-sand-dark/40 transition-colors"
             title="Refresh events"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-wine' : ''}`} />
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-300 flex items-start gap-3 shadow-sm">
+          <AlertCircle className="w-5 h-5 text-red-700 flex-shrink-0 mt-0.5" />
+          <div className="text-xs text-ink/80">
+            <strong className="text-red-700 font-semibold block mb-0.5">Could not load your events</strong>
+            {loadError}
+          </div>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-sand rounded-2xl border border-sand-dark p-4 mb-6 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
         {/* Status Filter Tabs */}
         <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-          {['All', 'Scheduled', 'Completed', 'Cancelled'].map((st) => (
+          {STATUS_TABS.map((st) => (
             <button
-              key={st}
+              key={st.value}
               type="button"
-              onClick={() => setStatusFilter(st)}
+              onClick={() => setStatusFilter(st.value)}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-heading uppercase tracking-wider font-bold transition-colors whitespace-nowrap ${
-                statusFilter === st
+                statusFilter === st.value
                   ? 'bg-wine text-sand shadow-sm'
                   : 'bg-sand-dark/40 text-ink/70 hover:bg-sand-dark/70 hover:text-ink'
               }`}
             >
-              {st}
+              {st.label}
             </button>
           ))}
         </div>
@@ -366,7 +332,6 @@ useEffect(() => {
             <thead>
               <tr className="bg-sand-dark/60 text-wine border-b border-sand-dark font-heading uppercase tracking-wider text-[11px]">
                 <th className="p-4">Event Details</th>
-                {isAdmin && <th className="p-4">Organizer</th>}
                 <th className="p-4">Venue & City</th>
                 <th className="p-4">Date & Time</th>
                 <th className="p-4">Ticket Price</th>
@@ -376,10 +341,16 @@ useEffect(() => {
               </tr>
             </thead>
             <tbody className="divide-y divide-sand-dark/60 font-medium">
-              {displayedEvents.length > 0 ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="p-10 text-center text-ink/60">
+                    Loading your events…
+                  </td>
+                </tr>
+              ) : displayedEvents.length > 0 ? (
                 displayedEvents.map((ev) => {
                   const pct = ev.capacity
-                    ? Math.min(100, Math.round((ev.tickets_sold / ev.capacity) * 100))
+                    ? Math.min(100, Math.round((Number(ev.tickets_sold || 0) / ev.capacity) * 100))
                     : 0;
 
                   return (
@@ -394,14 +365,6 @@ useEffect(() => {
                         </span>
                       </td>
 
-                      {/* Organizer Column (Only visible to Admin) */}
-                      {isAdmin && (
-                        <td className="p-4 text-ink font-semibold whitespace-nowrap">
-                          <span className="block">{ev.organizer}</span>
-                          <span className="text-[10px] text-ink/50 font-normal">{ev.organizer_email}</span>
-                        </td>
-                      )}
-
                       {/* Venue & City */}
                       <td className="p-4 text-ink/80 whitespace-nowrap">
                         <div className="font-semibold text-ink">{ev.venue}</div>
@@ -410,9 +373,9 @@ useEffect(() => {
 
                       {/* Start Time & End Time */}
                       <td className="p-4 text-ink/80 whitespace-nowrap">
-                        <div className="font-semibold text-ink">{ev.start_time || ev.date}</div>
+                        <div className="font-semibold text-ink">{formatDateTime(ev.start_time)}</div>
                         {ev.end_time && (
-                          <div className="text-[10px] text-ink/60 font-mono">to {ev.end_time}</div>
+                          <div className="text-[10px] text-ink/60">to {formatDateTime(ev.end_time)}</div>
                         )}
                       </td>
 
@@ -458,7 +421,7 @@ useEffect(() => {
                             <span>Edit</span>
                           </button>
 
-                          {ev.status !== 'Cancelled' && (
+                          {ev.status !== 'cancelled' && ev.status !== 'completed' && (
                             <button
                               type="button"
                               onClick={() => {
@@ -479,8 +442,10 @@ useEffect(() => {
                 })
               ) : (
                 <tr>
-                  <td colSpan={isAdmin ? 8 : 7} className="p-10 text-center text-ink/60">
-                    No events found. Click <strong>"Create Event"</strong> to schedule one.
+                  <td colSpan={7} className="p-10 text-center text-ink/60">
+                    {events.length === 0
+                      ? <>You haven't created any events yet. Click <strong>"Create Event"</strong> to add one.</>
+                      : 'No events match this filter.'}
                   </td>
                 </tr>
               )}
@@ -516,7 +481,7 @@ useEffect(() => {
                   {editingEvent ? 'Edit Event Details' : 'Create New Event'}
                 </h3>
                 <p className="text-xs text-ink/70">
-                  {editingEvent ? `Updating #${editingEvent.event_id}` : 'Fill in the event parameters'}
+                  {editingEvent ? `Event #${editingEvent.event_id}` : 'Saved to the events table'}
                 </p>
               </div>
             </div>
@@ -543,15 +508,16 @@ useEffect(() => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Category (Foreign Key)
+                    Category
                   </label>
                   <select
                     value={formData.category_id}
-                    onChange={(e) => setFormData({ ...formData, category_id: Number(e.target.value) })}
+                    onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
                     className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                   >
-                    {SEED_CATEGORIES.map((c) => (
-                      <option key={c.category_id} value={c.category_id}>
+                    <option value="">No category</option>
+                    {categories.map((c) => (
+                      <option key={c.category_id} value={String(c.category_id)}>
                         {c.name}
                       </option>
                     ))}
@@ -560,15 +526,16 @@ useEffect(() => {
 
                 <div className="space-y-1">
                   <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Venue (Foreign Key)
+                    Venue
                   </label>
                   <select
                     value={formData.venue_id}
-                    onChange={(e) => setFormData({ ...formData, venue_id: Number(e.target.value) })}
+                    onChange={(e) => setFormData({ ...formData, venue_id: e.target.value })}
                     className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                   >
-                    {SEED_VENUES.map((v) => (
-                      <option key={v.venue_id} value={v.venue_id}>
+                    <option value="">No venue yet</option>
+                    {venues.map((v) => (
+                      <option key={v.venue_id} value={String(v.venue_id)}>
                         {v.name} ({v.city})
                       </option>
                     ))}
@@ -645,6 +612,23 @@ useEffect(() => {
                 </div>
               </div>
 
+              {/* Status */}
+              <div className="space-y-1">
+                <label htmlFor="event-status" className="block text-xs font-heading uppercase tracking-wider text-ink">
+                  Status
+                </label>
+                <select
+                  id="event-status"
+                  value={formData.status}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                  className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
+                >
+                  {STATUS_TABS.filter((t) => t.value !== 'All').map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+
               {/* Description */}
               <div className="space-y-1">
                 <label className="block text-xs font-heading uppercase tracking-wider text-ink">
@@ -670,9 +654,10 @@ useEffect(() => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-sm"
+                  disabled={saving}
+                  className="px-5 py-2.5 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-sm disabled:opacity-60"
                 >
-                  {editingEvent ? 'Save Changes' : 'Create Event'}
+                  {saving ? 'Saving…' : editingEvent ? 'Save Changes' : 'Create Event'}
                 </button>
               </div>
             </form>
