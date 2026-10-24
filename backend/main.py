@@ -12,7 +12,8 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy import text
 import logging
 from routes.auth import router as auth_router
-from booking import router as booking_router
+from bookings import router as booking_router
+from reviews import router as reviews_router
 
 try:
     from backend.database import engine, get_db
@@ -29,6 +30,7 @@ app = FastAPI(
 )
 app.include_router(auth_router)
 app.include_router(booking_router)
+app.include_router(reviews_router)
 
 app.add_middleware(
     CORSMiddleware,
