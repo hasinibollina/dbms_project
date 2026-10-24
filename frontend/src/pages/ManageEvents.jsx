@@ -38,6 +38,28 @@ const STATUS_STYLES = {
   cancelled: 'bg-red-100 text-red-800 border border-red-300',
 };
 
+function formatDateTime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+// ISO timestamp -> value for <input type="datetime-local"> in the viewer's local time
+function toInputDateTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function ManageEvents() {
   const { user } = useAuth();
   const toast = useToast();
@@ -110,14 +132,6 @@ useEffect(() => {
     });
   }, [events, statusFilter, searchQuery]);
 
-  // Helper to format ISO to datetime-local value (YYYY-MM-DDTHH:mm)
-  const toInputDateTime = (dateStr) => {
-    if (!dateStr) return '';
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return '';
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
 
   // Open modal for Create
   const handleOpenCreate = () => {
@@ -411,7 +425,7 @@ useEffect(() => {
                       <td className="p-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-ink">
-                            {ev.tickets_sold}
+                            {Number(ev.tickets_sold || 0)}
                           </span>
                           <span className="text-ink/60">/ {ev.capacity}</span>
                           <span className="text-[10px] bg-sand-dark px-1.5 py-0.5 rounded font-bold text-ink">
@@ -424,11 +438,7 @@ useEffect(() => {
                       <td className="p-4 text-center whitespace-nowrap">
                         <span
                           className={`inline-block px-3 py-1 rounded-full text-[10px] font-heading uppercase tracking-wider font-bold ${
-                            ev.status === 'Scheduled'
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : ev.status === 'Completed'
-                              ? 'bg-sand-dark text-ink border border-sand-dark'
-                              : 'bg-red-100 text-red-800 border border-red-300'
+                            STATUS_STYLES[ev.status] || 'bg-sand-dark text-ink border border-sand-dark'
                           }`}
                         >
                           {ev.status}
