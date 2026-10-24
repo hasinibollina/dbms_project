@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from gotrue.errors import AuthApiError
@@ -27,7 +28,7 @@ def get_profile_role(user_id: str) -> str:
             ).scalar_one_or_none()
         return role or "organizer"
     except Exception:
-        return "organizer" 
+        return "organizer"
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -98,7 +99,26 @@ def login(request: LoginRequest):
             },
         }
 
-    except AuthApiError:
+    except AuthApiError as e:
+        err_msg = str(getattr(e, "message", "") or e).lower()
+        if "not confirmed" in err_msg or "email_not_confirmed" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please confirm your email before logging in",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        err_msg = str(e).lower()
+        if "not confirmed" in err_msg or "email_not_confirmed" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please confirm your email before logging in",
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -124,6 +144,17 @@ def signup(request: SignupRequest):
             },
         })
 
+        if (
+            result.user
+            and hasattr(result.user, "identities")
+            and result.user.identities is not None
+            and len(result.user.identities) == 0
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An account with this email already exists",
+            )
+
         return {
             "message": (
                 "Signup successful. Check your email to confirm your account."
@@ -131,12 +162,31 @@ def signup(request: SignupRequest):
                 else "Signup successful"
             ),
             "user": {
-                "id": result.user.id,
+                "id": str(result.user.id),
                 "email": result.user.email,
             } if result.user else None,
         }
 
-    except AuthApiError:
+    except AuthApiError as e:
+        err_msg = str(getattr(e, "message", "") or e).lower()
+        if "already registered" in err_msg or "already exists" in err_msg or "user already exists" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An account with this email already exists",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An account with this email already exists" if "user" in err_msg else "Unable to register with these credentials",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        err_msg = str(e).lower()
+        if "already registered" in err_msg or "already exists" in err_msg or "user already exists" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An account with this email already exists",
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unable to register with these credentials",
