@@ -77,13 +77,24 @@ def login(request: LoginRequest):
             "password": request.password,
         })
 
+        if not result.user or not result.session:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password",
+            )
+
+        role = get_profile_role(str(result.user.id))
+        full_name = (result.user.user_metadata or {}).get("full_name") or result.user.email.split("@")[0]
+
         return {
             "message": "Login successful",
             "access_token": result.session.access_token,
             "token_type": "bearer",
             "user": {
-                "id": result.user.id,
+                "id": str(result.user.id),
                 "email": result.user.email,
+                "full_name": full_name,
+                "role": role,
             },
         }
 
