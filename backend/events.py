@@ -110,6 +110,22 @@ def list_events():
         raise HTTPException(status_code=503, detail="Could not load events")
 
 
+@router.get("/mine")
+def list_my_events(user=Depends(require_event_manager)):
+    """Events created by the logged-in user (organizer_id = their Supabase user id).
+    Must stay above /{event_id} so "mine" is not read as an event id."""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(EVENT_LIST_SQL.format(where="WHERE e.organizer_id = :organizer_id")),
+                {"organizer_id": str(user.id)},
+            ).mappings().all()
+            return [dict(row) for row in rows]
+    except Exception:
+        logger.exception("Could not list user's events")
+        raise HTTPException(status_code=503, detail="Could not load your events")
+
+
 @router.get("/{event_id}")
 def get_event(event_id: int):
     try:
