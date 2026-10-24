@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { Menu, X, LogOut, LogIn } from 'lucide-react';
+import { Menu, X, LogOut, LogIn, UserPlus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -126,6 +126,19 @@ export default function Navbar() {
                 >
                   <LogIn className="w-3.5 h-3.5" />
                   <span>Login</span>
+                </NavLink>
+                <NavLink
+                  to="/register"
+                  className={({ isActive }) =>
+                    `inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-heading uppercase tracking-wider font-bold transition-all border ${
+                      isActive
+                        ? 'bg-sand/20 text-sand border-sand'
+                        : 'border-sand/40 text-sand hover:bg-sand hover:text-wine'
+                    }`
+                  }
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Sign Up</span>
                 </NavLink>
               </div>
             )}
