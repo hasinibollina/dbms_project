@@ -72,6 +72,18 @@ class EventVendorCreate(BaseModel):
 
 
 
+# Allowed values of the events.status CHECK constraint in the database
+EVENT_STATUSES = {"draft", "published", "cancelled", "completed"}
+
+
+def check_status(value):
+    if value is not None and value not in EVENT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of: {', '.join(sorted(EVENT_STATUSES))}",
+        )
+
+
 # Event rows with category/venue names and ticket totals, used by the list endpoints
 EVENT_LIST_SQL = """
     SELECT e.event_id, e.title, e.description, e.organizer_id,
@@ -148,6 +160,7 @@ def create_event(event: EventCreate, user=Depends(require_event_manager)):
     """Create an event; organizer_id always comes from the verified token."""
     role = get_user_role(user)
     values = event.model_dump()
+    check_status(values["status"])
     if values["end_time"] <= values["start_time"]:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
@@ -181,6 +194,7 @@ def update_event(event_id: int, changes: EventUpdate, user=Depends(require_event
     updates = changes.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided")
+    check_status(updates.get("status"))
     if "start_time" in updates and updates["start_time"] is None:
         raise HTTPException(status_code=400, detail="start_time cannot be null")
     if "end_time" in updates and updates["end_time"] is None:
@@ -490,3 +504,4 @@ def remove_vendor_from_event(
             status_code=503,
             detail="Could not remove vendor from event",
         )
+
