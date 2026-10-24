@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { User, Mail, Lock, Phone, UserPlus, Sparkles, ShieldCheck, ArrowRight } from 'lucide-react';
+import { User, Mail, Lock, UserPlus, Sparkles } from 'lucide-react';
 import { authApi } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -14,8 +14,6 @@ export default function Register() {
     full_name: '',
     email: '',
     password: '',
-    phone: '',
-    role: 'Attendee',
   });
   const [loading, setLoading] = useState(false);
   const [formErrors, setFormErrors] = useState({});
@@ -49,8 +47,6 @@ export default function Register() {
         full_name: formData.full_name.trim(),
         email: formData.email.trim(),
         password: formData.password,
-        phone: formData.phone.trim() || null,
-        role: formData.role,
       };
 
       const response = await authApi.register(payload);
@@ -170,45 +166,7 @@ export default function Register() {
             )}
           </div>
 
-          {/* Phone */}
-          <div className="space-y-1.5">
-            <label htmlFor="reg-phone" className="block text-xs font-heading uppercase tracking-wider text-ink">
-              Phone Number
-            </label>
-            <div className="relative">
-              <Phone className="w-4 h-4 text-wine absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                id="reg-phone"
-                name="phone"
-                type="tel"
-                maxLength={20}
-                value={formData.phone}
-                onChange={handleInputChange}
-                placeholder="+91 9876543210"
-                className="w-full pl-11 pr-4 py-3 bg-sand-dark/30 border border-sand-dark rounded-xl text-sm font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all"
-              />
-            </div>
-          </div>
 
-          {/* Role (CHECK role IN ('Attendee', 'Organizer', 'Admin')) */}
-          <div className="space-y-1.5">
-            <label htmlFor="reg-role" className="block text-xs font-heading uppercase tracking-wider text-ink">
-              Account Role <span className="text-red-700">*</span>
-            </label>
-            <div className="relative">
-              <ShieldCheck className="w-4 h-4 text-wine absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <select
-                id="reg-role"
-                name="role"
-                value={formData.role}
-                onChange={handleInputChange}
-                className="w-full pl-11 pr-4 py-3 bg-sand-dark/30 border border-sand-dark rounded-xl text-sm font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all"
-              >
-                <option value="Attendee">Attendee (Browse & Register for Events)</option>
-                <option value="Organizer">Organizer (Host & Manage Events)</option>
-              </select>
-            </div>
-          </div>
 
           {/* Submit Button */}
           <button
