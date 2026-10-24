@@ -95,7 +95,7 @@ export default function ManageEvents() {
   // Cancel confirmation modal
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [eventToCancel, setEventToCancel] = useState(null);
-
+  const [cancelling, setCancelling] = useState(false);
 
   const isAdmin = user?.role?.toLowerCase() === 'admin';
 
@@ -669,10 +669,11 @@ export default function ManageEvents() {
       <ConfirmModal
         isOpen={cancelModalOpen}
         title="Cancel This Event?"
-        message={`Are you sure you want to cancel "${eventToCancel?.title}"? Ticket sales will immediately be halted.`}
+        message={`Cancel "${eventToCancel?.title}"? Its status becomes "cancelled"; the event stays in the database.`}
         confirmText="Confirm Cancellation"
         cancelText="Keep Active"
         isDanger={true}
+        isLoading={cancelling}
         onConfirm={confirmCancelEvent}
         onClose={() => {
           setCancelModalOpen(false);
