@@ -91,7 +91,6 @@ export default function Login() {
         </p>
       </div>
 
-
       {/* Login Card */}
       <div className="bg-sand rounded-2xl border border-sand-dark p-6 sm:p-8 shadow-poster space-y-6">
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
@@ -144,19 +143,30 @@ export default function Login() {
             }`}
           >
             <LogIn className="w-4 h-4" />
-            <span>{loading ? 'Signing in...' : 'Sign In'}</span>
+            <span>{loading ? 'Signing in…' : 'Sign In'}</span>
           </button>
 
-          {/* Error Message Display: Wrong credentials show "Incorrect email or password" under the form */}
-          {errorMessage && (
-            <div
-              id="login-error-message"
-              className="p-3 rounded-xl bg-red-100 border border-red-300 text-red-800 text-xs font-bold text-center mt-3 animate-fadeIn"
+          {/* Link under the button */}
+          <div className="pt-4 border-t border-sand-dark text-center text-xs text-ink/75">
+            New here?{' '}
+            <Link
+              to="/register"
+              className="text-wine font-bold hover:underline underline-offset-2 ml-1"
             >
-              {errorMessage}
-            </div>
-          )}
+              Create an account
+            </Link>
+          </div>
         </form>
+
+        {/* Backend error message displayed under the form */}
+        {errorMessage && (
+          <div
+            id="login-error-message"
+            className="p-3 rounded-xl bg-red-100 border border-red-300 text-red-800 text-xs font-bold text-center mt-3 animate-fadeIn"
+          >
+            {errorMessage}
+          </div>
+        )}
       </div>
     </div>
   );
