@@ -5,9 +5,17 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
-from database import get_db
+try:
+    from backend.database import get_db
+    from backend.routes.auth import get_current_user
+    from backend.admin import require_admin
+except ImportError:
+    from database import get_db
+    from routes.auth import get_current_user
+    from admin import require_admin
 
-router = APIRouter(prefix="/vendors", tags=["Vendors"])
+
+router = APIRouter(prefix="/api/vendors", tags=["Vendors"])
 
 
 class VendorCreate(BaseModel):
@@ -26,9 +34,12 @@ class VendorUpdate(BaseModel):
     email: EmailStr | None = None
 
 
-# GET: View all vendors
-@router.get("/")
-def get_vendors(db: Session = Depends(get_db)):
+# GET: Both authenticated admins and organizers can view vendors
+@router.get("")
+def get_vendors(
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     result = db.execute(text("""
         SELECT v.vendor_id, v.vendor_name, v.service_id,
                s.service_name, v.service_description,
@@ -37,12 +48,17 @@ def get_vendors(db: Session = Depends(get_db)):
         JOIN services s ON v.service_id = s.service_id
         ORDER BY v.vendor_id
     """))
+
     return [dict(row) for row in result.mappings().all()]
 
 
-# POST: Add a vendor
-@router.post("/", status_code=201)
-def add_vendor(vendor: VendorCreate, db: Session = Depends(get_db)):
+# POST: Only admins can add vendors
+@router.post("", status_code=201)
+def add_vendor(
+    vendor: VendorCreate,
+    user=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
     try:
         result = db.execute(text("""
             INSERT INTO vendors
@@ -58,9 +74,15 @@ def add_vendor(vendor: VendorCreate, db: Session = Depends(get_db)):
             "phone": vendor.phone,
             "email": str(vendor.email) if vendor.email else None,
         })
+
         saved = dict(result.mappings().one())
         db.commit()
-        return {"message": "Vendor added successfully", "vendor": saved}
+
+        return {
+            "message": "Vendor added successfully",
+            "vendor": saved
+        }
+
     except IntegrityError:
         db.rollback()
         raise HTTPException(
@@ -69,17 +91,21 @@ def add_vendor(vendor: VendorCreate, db: Session = Depends(get_db)):
         )
 
 
-# PUT: Update a vendor
+# PUT: Only admins can update vendors
 @router.put("/{vendor_id}")
 def update_vendor(
     vendor_id: int,
     vendor: VendorUpdate,
+    user=Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     changes = vendor.model_dump(exclude_unset=True)
 
     if not changes:
-        raise HTTPException(status_code=400, detail="No fields provided.")
+        raise HTTPException(
+            status_code=400,
+            detail="No fields provided."
+        )
 
     if "vendor_name" in changes and changes["vendor_name"] is not None:
         changes["vendor_name"] = changes["vendor_name"].strip()
@@ -88,11 +114,22 @@ def update_vendor(
         changes["email"] = str(changes["email"])
 
     fields = {
-        "vendor_name", "service_id", "service_description", "phone", "email"
+        "vendor_name",
+        "service_id",
+        "service_description",
+        "phone",
+        "email"
     }
-    updates = {key: value for key, value in changes.items() if key in fields}
 
-    assignments = ", ".join(f"{key} = :{key}" for key in updates)
+    updates = {
+        key: value
+        for key, value in changes.items()
+        if key in fields
+    }
+
+    assignments = ", ".join(
+        f"{key} = :{key}" for key in updates
+    )
 
     try:
         result = db.execute(text(f"""
@@ -101,16 +138,28 @@ def update_vendor(
             WHERE vendor_id = :vendor_id
             RETURNING vendor_id, vendor_name, service_id,
                       service_description, phone, email, created_at
-        """), {**updates, "vendor_id": vendor_id})
+        """), {
+            **updates,
+            "vendor_id": vendor_id
+        })
 
         row = result.mappings().one_or_none()
 
         if row is None:
             db.rollback()
-            raise HTTPException(status_code=404, detail="Vendor not found.")
+            raise HTTPException(
+                status_code=404,
+                detail="Vendor not found."
+            )
 
+        saved = dict(row)
         db.commit()
-        return {"message": "Vendor updated successfully", "vendor": dict(row)}
+
+        return {
+            "message": "Vendor updated successfully",
+            "vendor": saved
+        }
+
     except IntegrityError:
         db.rollback()
         raise HTTPException(
@@ -119,20 +168,39 @@ def update_vendor(
         )
 
 
-# DELETE: Remove a vendor
+# DELETE: Only admins can delete vendors
 @router.delete("/{vendor_id}")
-def delete_vendor(vendor_id: int, db: Session = Depends(get_db)):
-    result = db.execute(text("""
-        DELETE FROM vendors
-        WHERE vendor_id = :vendor_id
-        RETURNING vendor_id
-    """), {"vendor_id": vendor_id})
+def delete_vendor(
+    vendor_id: int,
+    user=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    try:
+        result = db.execute(text("""
+            DELETE FROM vendors
+            WHERE vendor_id = :vendor_id
+            RETURNING vendor_id
+        """), {"vendor_id": vendor_id})
 
-    deleted = result.scalar_one_or_none()
+        deleted = result.scalar_one_or_none()
 
-    if deleted is None:
+        if deleted is None:
+            db.rollback()
+            raise HTTPException(
+                status_code=404,
+                detail="Vendor not found."
+            )
+
+        db.commit()
+
+        return {
+            "message": "Vendor deleted successfully",
+            "vendor_id": vendor_id
+        }
+
+    except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=404, detail="Vendor not found.")
-
-    db.commit()
-    return {"message": "Vendor deleted successfully"}
+        raise HTTPException(
+            status_code=409,
+            detail="Vendor cannot be deleted because it is in use."
+        )
