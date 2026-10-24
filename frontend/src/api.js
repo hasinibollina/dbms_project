@@ -154,14 +154,14 @@ export const servicesApi = {
 
 // Users / Auth API
 export const authApi = {
-  login: (credentials) => request('/api/auth/login', {
+  login: ({ email, password }) => request('/api/auth/login', {
     method: 'POST',
-    body: credentials,
+    body: { email, password },
   }),
 
-  register: (userData) => request('/users/register', {
+  register: ({ full_name, email, password }) => request('/api/auth/signup', {
     method: 'POST',
-    body: userData,
+    body: { full_name, email, password },
   }),
 };
 
