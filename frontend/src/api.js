@@ -5,6 +5,17 @@
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+function getStoredToken() {
+  try {
+    const raw = localStorage.getItem('eventilion_user');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.token || parsed?.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
   
@@ -12,6 +23,11 @@ async function request(endpoint, options = {}) {
     'Content-Type': 'application/json',
     ...options.headers,
   };
+
+  const token = getStoredToken();
+  if (token && !headers['Authorization'] && !headers['authorization']) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
 
   const config = {
     ...options,
