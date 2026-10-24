@@ -1,8 +1,8 @@
 """FastAPI Backend Application for Eventilion DBMS Project.
 
-Provides endpoints for Admin Analytics, Venues, Vendors, and Events.
+Provides endpoints for Admin Analytics, Venues, Vendors, lookup tables and auth.
 Uses SQL queries with JOIN, GROUP BY, and aggregate functions.
-Gracefully falls back to local seed data if database is unreachable.
+Database errors are returned to the client (no sample-data fallback).
 """
 
 from fastapi import FastAPI, HTTPException, Depends, Query, status
@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 import logging
 from backend.routes.auth import router as auth_router
 
@@ -36,209 +37,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --------------------------------------------------------------------------
-# Fallback In-Memory Seed Data (used when remote database is offline)
-# --------------------------------------------------------------------------
-SEED_VENDORS = [
-    {
-        "vendor_id": 1,
-        "name": "Royal Rasoi Caterers",
-        "service_type": "Catering",
-        "city": "Bengaluru",
-        "phone": "+91 9845012345",
-        "price_min": 40000.0,
-        "price_max": 150000.0,
-        "rating": 4.9,
-        "status": "Active",
-        "events_served": 14,
-    },
-    {
-        "vendor_id": 2,
-        "name": "SoundCraft Acoustics & Lighting",
-        "service_type": "Sound & AV",
-        "city": "Mumbai",
-        "phone": "+91 9820054321",
-        "price_min": 30000.0,
-        "price_max": 95000.0,
-        "rating": 4.8,
-        "status": "Active",
-        "events_served": 18,
-    },
-    {
-        "vendor_id": 3,
-        "name": "Utsav Mandap & Floral Decor",
-        "service_type": "Stage & Decor",
-        "city": "Hyderabad",
-        "phone": "+91 9849033445",
-        "price_min": 50000.0,
-        "price_max": 200000.0,
-        "rating": 4.7,
-        "status": "Active",
-        "events_served": 11,
-    },
-    {
-        "vendor_id": 4,
-        "name": "Prism Lens Studios & Cinematography",
-        "service_type": "Photography & Video",
-        "city": "Bengaluru",
-        "phone": "+91 9900011223",
-        "price_min": 35000.0,
-        "price_max": 85000.0,
-        "rating": 4.9,
-        "status": "Active",
-        "events_served": 16,
-    },
-    {
-        "vendor_id": 5,
-        "name": "Spice Route Banquets & Buffets",
-        "service_type": "Catering",
-        "city": "Hyderabad",
-        "phone": "+91 9701044556",
-        "price_min": 60000.0,
-        "price_max": 180000.0,
-        "rating": 4.6,
-        "status": "Active",
-        "events_served": 9,
-    },
-    {
-        "vendor_id": 6,
-        "name": "ThunderStage Truss & Rigging",
-        "service_type": "Stage & Decor",
-        "city": "Mumbai",
-        "phone": "+91 9819077889",
-        "price_min": 75000.0,
-        "price_max": 250000.0,
-        "rating": 4.8,
-        "status": "Active",
-        "events_served": 12,
-    },
-    {
-        "vendor_id": 7,
-        "name": "Apex Visuals LED Walls & 4K Projections",
-        "service_type": "Sound & AV",
-        "city": "Bengaluru",
-        "phone": "+91 9845099887",
-        "price_min": 45000.0,
-        "price_max": 120000.0,
-        "rating": 4.9,
-        "status": "Active",
-        "events_served": 20,
-    },
-    {
-        "vendor_id": 8,
-        "name": "Garuda Security & Crowd Management",
-        "service_type": "Security & Hospitality",
-        "city": "Bengaluru",
-        "phone": "+91 9844022334",
-        "price_min": 20000.0,
-        "price_max": 50000.0,
-        "rating": 4.5,
-        "status": "Active",
-        "events_served": 22,
-    },
-    {
-        "vendor_id": 9,
-        "name": "ShutterMagic Candid Photo & Drone",
-        "service_type": "Photography & Video",
-        "city": "Mumbai",
-        "phone": "+91 9821033221",
-        "price_min": 40000.0,
-        "price_max": 90000.0,
-        "rating": 4.7,
-        "status": "Active",
-        "events_served": 13,
-    },
-    {
-        "vendor_id": 10,
-        "name": "Deccan Delight Biryani & Live Counters",
-        "service_type": "Catering",
-        "city": "Hyderabad",
-        "phone": "+91 9848011998",
-        "price_min": 35000.0,
-        "price_max": 110000.0,
-        "rating": 4.8,
-        "status": "Active",
-        "events_served": 15,
-    },
-    {
-        "vendor_id": 11,
-        "name": "Nirvana Acoustic Engineering",
-        "service_type": "Sound & AV",
-        "city": "Hyderabad",
-        "phone": "+91 9700033211",
-        "price_min": 25000.0,
-        "price_max": 70000.0,
-        "rating": 4.6,
-        "status": "Inactive",
-        "events_served": 7,
-    },
-    {
-        "vendor_id": 12,
-        "name": "Elegance Flora & Theme Stylists",
-        "service_type": "Stage & Decor",
-        "city": "Bengaluru",
-        "phone": "+91 9988011224",
-        "price_min": 55000.0,
-        "price_max": 160000.0,
-        "rating": 4.8,
-        "status": "Active",
-        "events_served": 10,
-    },
-    {
-        "vendor_id": 13,
-        "name": "KnightGuard VIP Bouncers & Stewards",
-        "service_type": "Security & Hospitality",
-        "city": "Mumbai",
-        "phone": "+91 9820066778",
-        "price_min": 25000.0,
-        "price_max": 65000.0,
-        "rating": 4.6,
-        "status": "Active",
-        "events_served": 17,
-    },
-    {
-        "vendor_id": 14,
-        "name": "PixelMotion Live Streaming & Webcast",
-        "service_type": "Photography & Video",
-        "city": "Hyderabad",
-        "phone": "+91 9849088776",
-        "price_min": 28000.0,
-        "price_max": 60000.0,
-        "rating": 4.7,
-        "status": "Active",
-        "events_served": 8,
-    },
-]
 
 # --------------------------------------------------------------------------
-# Pydantic Schemas for Vendors
+# Vendor models (match the live `vendors` table:
+#   vendor_id, vendor_name, service_id -> services, service_description, phone, email, created_at)
 # --------------------------------------------------------------------------
-class VendorBase(BaseModel):
-    name: str = Field(..., min_length=2, max_length=150)
-    service_type: str = Field(..., max_length=100)
-    city: str = Field(..., max_length=80)
-    phone: Optional[str] = None
-    price_min: float = 0.0
-    price_max: float = 0.0
-    rating: float = 4.5
-    status: str = "Active"
+class VendorCreate(BaseModel):
+    vendor_name: str = Field(min_length=1, max_length=150)
+    service_id: int = Field(gt=0)
+    service_description: Optional[str] = None
+    phone: Optional[str] = Field(default=None, max_length=20)
+    email: Optional[str] = Field(default=None, max_length=150)
 
-class VendorCreate(VendorBase):
-    pass
 
 class VendorUpdate(BaseModel):
-    name: Optional[str] = None
-    service_type: Optional[str] = None
-    city: Optional[str] = None
-    phone: Optional[str] = None
-    price_min: Optional[float] = None
-    price_max: Optional[float] = None
-    rating: Optional[float] = None
-    status: Optional[str] = None
+    vendor_name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    service_id: Optional[int] = Field(default=None, gt=0)
+    service_description: Optional[str] = None
+    phone: Optional[str] = Field(default=None, max_length=20)
+    email: Optional[str] = Field(default=None, max_length=150)
 
-class VendorOut(VendorBase):
-    vendor_id: int
-    events_served: int = 0
+
+VENDOR_COLUMNS = """
+    v.vendor_id, v.vendor_name, v.service_id, s.service_name,
+    v.service_description, v.phone, v.email, v.created_at
+"""
+
 
 # --------------------------------------------------------------------------
 # Venue Pydantic Models
@@ -294,537 +118,323 @@ def is_db_connected():
 
 
 # --------------------------------------------------------------------------
-# Admin Endpoints
+# Admin Analytics (read-only). Errors are returned to the client instead of
+# being replaced by sample data, so problems are visible on screen.
 # --------------------------------------------------------------------------
+def _db_error(context: str, exc: Exception):
+    logger.error(f"{context}: {exc}")
+    raise HTTPException(status_code=503, detail=f"{context}. Check the backend terminal for details.")
+
 
 @app.get("/api/admin/stats")
 def get_admin_stats():
-    """Returns top-level KPIs for events, revenue, registrations, and vendors."""
-    if is_db_connected():
-        try:
-            with engine.connect() as conn:
-                # Aggregate events summary
-                evt_q = text("""
-                    SELECT 
-                        COUNT(*) AS total_events,
-                        COUNT(CASE WHEN end_time > NOW() THEN 1 END) AS upcoming_events,
-                        COUNT(CASE WHEN end_time <= NOW() THEN 1 END) AS completed_events
-                    FROM events;
-                """)
-                evt_res = conn.execute(evt_q).mappings().one()
-
-                # Aggregate bookings and revenue
-                book_q = text("""
-                    SELECT 
-                        COALESCE(SUM(ticket_quantity), 0) AS total_registrations,
-                        COALESCE(SUM(total_amount), 0) AS total_revenue
-                    FROM bookings;
-                """)
-                book_res = conn.execute(book_q).mappings().one()
-
-                # Venues count
-                v_q = text("SELECT COUNT(*) AS total_venues FROM venues;")
-                total_venues = conn.execute(v_q).scalar() or 0
-
-                # Vendors count
-                vnd_q = text("SELECT COUNT(*) AS total_vendors FROM vendors;")
-                total_vendors = conn.execute(vnd_q).scalar() or 0
-
-                # Average rating
-                rev_q = text("SELECT COALESCE(ROUND(AVG(rating), 2), 4.8) AS avg_rating FROM reviews;")
-                avg_rating = float(conn.execute(rev_q).scalar() or 4.8)
-
-                return {
-                    "total_events": evt_res["total_events"],
-                    "upcoming_events": evt_res["upcoming_events"],
-                    "completed_events": evt_res["completed_events"],
-                    "total_registrations": int(book_res["total_registrations"]),
-                    "total_revenue": float(book_res["total_revenue"]),
-                    "total_venues": total_venues,
-                    "total_vendors": total_vendors,
-                    "avg_rating": avg_rating,
-                }
-        except Exception as e:
-            logger.warning(f"Database query failed, serving seed stats: {e}")
-
-    # Fallback response
-    return {
-        "total_events": 18,
-        "upcoming_events": 11,
-        "completed_events": 7,
-        "total_registrations": 4820,
-        "total_revenue": 1485000.0,
-        "total_venues": 6,
-        "total_vendors": 14,
-        "active_vendors": 13,
-        "inactive_vendors": 1,
-        "avg_rating": 4.8,
-    }
+    """Top-level KPIs computed from events, bookings, venues, vendors and reviews."""
+    try:
+        with engine.connect() as conn:
+            evt = conn.execute(text("""
+                SELECT COUNT(*) AS total_events,
+                       COUNT(*) FILTER (WHERE end_time > NOW())  AS upcoming_events,
+                       COUNT(*) FILTER (WHERE end_time <= NOW()) AS completed_events
+                FROM events;
+            """)).mappings().one()
+            book = conn.execute(text("""
+                SELECT COALESCE(SUM(ticket_quantity), 0) AS total_registrations,
+                       COALESCE(SUM(total_amount), 0)    AS total_revenue
+                FROM bookings
+                WHERE status <> 'cancelled';
+            """)).mappings().one()
+            total_venues = conn.execute(text("SELECT COUNT(*) FROM venues;")).scalar() or 0
+            total_vendors = conn.execute(text("SELECT COUNT(*) FROM vendors;")).scalar() or 0
+            total_services = conn.execute(text("SELECT COUNT(*) FROM services;")).scalar() or 0
+            avg_rating = conn.execute(text("SELECT ROUND(AVG(rating), 2) FROM reviews;")).scalar()
+            weekly = conn.execute(text("""
+                SELECT to_char(w.week_start, 'DD Mon') AS label,
+                       COALESCE(SUM(b.ticket_quantity), 0) AS registrations,
+                       COALESCE(SUM(b.total_amount), 0)    AS revenue
+                FROM generate_series(date_trunc('week', CURRENT_DATE) - INTERVAL '11 weeks',
+                                     date_trunc('week', CURRENT_DATE), INTERVAL '1 week') AS w(week_start)
+                LEFT JOIN bookings b
+                       ON date_trunc('week', b.booking_date) = w.week_start
+                      AND b.status <> 'cancelled'
+                GROUP BY w.week_start
+                ORDER BY w.week_start;
+            """)).mappings().all()
+            by_category = conn.execute(text("""
+                SELECT c.name AS category,
+                       COUNT(DISTINCT e.event_id) AS events,
+                       COALESCE(SUM(b.total_amount) FILTER (WHERE b.status <> 'cancelled'), 0) AS revenue
+                FROM categories c
+                JOIN events e ON e.category_id = c.category_id
+                LEFT JOIN bookings b ON b.event_id = e.event_id
+                GROUP BY c.category_id, c.name
+                ORDER BY revenue DESC, c.name;
+            """)).mappings().all()
+            return {
+                "total_events": int(evt["total_events"]),
+                "upcoming_events": int(evt["upcoming_events"]),
+                "completed_events": int(evt["completed_events"]),
+                "total_registrations": int(book["total_registrations"]),
+                "total_revenue": float(book["total_revenue"]),
+                "total_venues": int(total_venues),
+                "total_vendors": int(total_vendors),
+                "total_services": int(total_services),
+                "avg_rating": float(avg_rating) if avg_rating is not None else None,
+                "weekly_registrations": [
+                    {"label": r["label"], "registrations": int(r["registrations"]), "revenue": float(r["revenue"])}
+                    for r in weekly
+                ],
+                "category_revenue": [
+                    {"category": r["category"], "events": int(r["events"]), "revenue": float(r["revenue"])}
+                    for r in by_category
+                ],
+            }
+    except Exception as e:
+        _db_error("Could not load admin statistics", e)
 
 
 @app.get("/api/admin/events")
 def get_admin_events():
-    """Returns all events with joins on organizer, category, venue, and tickets sold."""
-    if is_db_connected():
-        try:
-            with engine.connect() as conn:
-                q = text("""
-                    SELECT 
-                        e.event_id,
-                        e.title,
-                        e.start_time,
-                        e.end_time,
-                        e.ticket_price,
-                        e.capacity,
-                        e.status,
-                        COALESCE(c.name, 'Uncategorized') AS category,
-                        COALESCE(v.name, 'Unassigned') AS venue,
-                        COALESCE(v.city, 'N/A') AS city,
-                        'Admin' AS organizer,
-                        COALESCE(SUM(b.ticket_quantity), 0) AS tickets_sold,
-                        COALESCE(SUM(b.total_amount), 0) AS revenue
-                    FROM events e
-                    LEFT JOIN categories c ON e.category_id = c.category_id
-                    LEFT JOIN venues v ON e.venue_id = v.venue_id
-                    LEFT JOIN bookings b ON e.event_id = b.event_id
-                    GROUP BY e.event_id, e.title, e.start_time, e.end_time, e.ticket_price, e.capacity, e.status, c.name, v.name, v.city
-                    ORDER BY e.start_time DESC;
-                """)
-                rows = conn.execute(q).mappings().all()
-                return [dict(row) for row in rows]
-        except Exception as e:
-            logger.warning(f"Events query failed, serving seed events: {e}")
-
-    # Fallback seed events
-    from datetime import datetime, timedelta
-    now = datetime.now()
-    return [
-        {
-            "event_id": 101,
-            "title": "Future of Generative AI Summit 2026",
-            "organizer": "Arjun Mehta",
-            "venue": "Apex Convention Center",
-            "city": "Bengaluru",
-            "category": "Technology & AI",
-            "date": (now + timedelta(days=12)).strftime("%Y-%m-%d %H:%M"),
-            "tickets_sold": 1320,
-            "capacity": 1500,
-            "pct_sold": 88,
-            "ticket_price": 1499,
-            "revenue": 1978680,
-            "status": "Scheduled",
-        },
-        {
-            "event_id": 102,
-            "title": "Acoustic Sunset Symphony & Jazz Night",
-            "organizer": "Sneha Admin",
-            "venue": "Symphony Amphitheatre",
-            "city": "Hyderabad",
-            "category": "Music & Concerts",
-            "date": (now + timedelta(days=5)).strftime("%Y-%m-%d %H:%M"),
-            "tickets_sold": 760,
-            "capacity": 800,
-            "pct_sold": 95,
-            "ticket_price": 899,
-            "revenue": 683240,
-            "status": "Scheduled",
-        },
-        {
-            "event_id": 103,
-            "title": "Angel Investors & Startup Pitch Day",
-            "organizer": "Arjun Mehta",
-            "venue": "Innovate Cowork & Hall",
-            "city": "Mumbai",
-            "category": "Business & Networking",
-            "date": (now + timedelta(days=18)).strftime("%Y-%m-%d %H:%M"),
-            "tickets_sold": 220,
-            "capacity": 250,
-            "pct_sold": 88,
-            "ticket_price": 499,
-            "revenue": 109780,
-            "status": "Scheduled",
-        },
-        {
-            "event_id": 104,
-            "title": "Modern Digital Art & Interactive Installation",
-            "organizer": "Vikram Rao",
-            "venue": "Apex Convention Center",
-            "city": "Bengaluru",
-            "category": "Arts & Theatre",
-            "date": (now - timedelta(days=8)).strftime("%Y-%m-%d %H:%M"),
-            "tickets_sold": 1400,
-            "capacity": 1500,
-            "pct_sold": 93,
-            "ticket_price": 0,
-            "revenue": 0,
-            "status": "Completed",
-        },
-        {
-            "event_id": 105,
-            "title": "Full-Stack DBMS & Cloud Architecture Bootcamp",
-            "organizer": "Sneha Admin",
-            "venue": "Innovate Cowork & Hall",
-            "city": "Mumbai",
-            "category": "Workshops & Learning",
-            "date": (now + timedelta(days=25)).strftime("%Y-%m-%d %H:%M"),
-            "tickets_sold": 195,
-            "capacity": 250,
-            "pct_sold": 78,
-            "ticket_price": 1999,
-            "revenue": 389805,
-            "status": "Scheduled",
-        },
-        {
-            "event_id": 106,
-            "title": "Classical Strings & Fusion Orchestra Live",
-            "organizer": "Pooja Sharma",
-            "venue": "Symphony Amphitheatre",
-            "city": "Hyderabad",
-            "category": "Music & Concerts",
-            "date": (now - timedelta(days=15)).strftime("%Y-%m-%d %H:%M"),
-            "tickets_sold": 800,
-            "capacity": 800,
-            "pct_sold": 100,
-            "ticket_price": 1200,
-            "revenue": 960000,
-            "status": "Completed",
-        },
-        {
-            "event_id": 107,
-            "title": "Autonomous Systems & Robotics Hackathon",
-            "organizer": "Arjun Mehta",
-            "venue": "Apex Convention Center",
-            "city": "Bengaluru",
-            "category": "Technology & AI",
-            "date": (now + timedelta(days=32)).strftime("%Y-%m-%d %H:%M"),
-            "tickets_sold": 850,
-            "capacity": 1200,
-            "pct_sold": 71,
-            "ticket_price": 299,
-            "revenue": 254150,
-            "status": "Scheduled",
-        },
-        {
-            "event_id": 108,
-            "title": "Culinary Heritage Food & Craft Expo",
-            "organizer": "Sneha Admin",
-            "venue": "Symphony Amphitheatre",
-            "city": "Hyderabad",
-            "category": "Arts & Theatre",
-            "date": (now - timedelta(days=22)).strftime("%Y-%m-%d %H:%M"),
-            "tickets_sold": 680,
-            "capacity": 800,
-            "pct_sold": 85,
-            "ticket_price": 250,
-            "revenue": 170000,
-            "status": "Completed",
-        },
-    ]
+    """All events with category, venue, tickets sold and revenue (JOIN + GROUP BY).
+    Also returns category/venue/city/organizer aliases used by the Events and Manage Events pages."""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT e.event_id, e.title, e.start_time, e.end_time,
+                       e.ticket_price, e.capacity, e.status,
+                       c.name AS category_name,
+                       v.name AS venue_name,
+                       v.city AS venue_city,
+                       COALESCE(c.name, 'Uncategorized') AS category,
+                       COALESCE(v.name, 'Unassigned')    AS venue,
+                       COALESCE(v.city, 'N/A')           AS city,
+                       'Admin'                           AS organizer,
+                       COALESCE(SUM(b.ticket_quantity) FILTER (WHERE b.status <> 'cancelled'), 0) AS tickets_sold,
+                       COALESCE(SUM(b.total_amount)   FILTER (WHERE b.status <> 'cancelled'), 0) AS revenue
+                FROM events e
+                LEFT JOIN categories c ON c.category_id = e.category_id
+                LEFT JOIN venues     v ON v.venue_id    = e.venue_id
+                LEFT JOIN bookings   b ON b.event_id    = e.event_id
+                GROUP BY e.event_id, c.name, v.name, v.city
+                ORDER BY e.start_time DESC;
+            """)).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not load events analytics", e)
 
 
 @app.get("/api/admin/venues")
 def get_admin_venues():
-    """Returns venue utilization, events hosted, bookings, and revenue."""
-    if is_db_connected():
-        try:
-            with engine.connect() as conn:
-                q = text("""
-                    SELECT 
-                        v.venue_id,
-                        v.name,
-                        v.city,
-                        v.capacity,
-                        v.price_per_hour,
-                        COUNT(DISTINCT e.event_id) AS events_hosted,
-                        COUNT(DISTINCT b.booking_id) AS total_bookings,
-                        COALESCE(SUM(b.total_amount), 0) AS revenue_generated,
-                        ROUND(
-                            CASE 
-                                WHEN COUNT(DISTINCT e.event_id) = 0 THEN 0
-                                ELSE (COUNT(DISTINCT e.event_id)::numeric / 12.0) * 100 
-                            END, 1
-                        ) AS utilisation_pct
-                    FROM venues v
-                    LEFT JOIN events e ON v.venue_id = e.venue_id
-                    LEFT JOIN bookings b ON e.event_id = b.event_id
-                    GROUP BY v.venue_id, v.name, v.city, v.capacity, v.price_per_hour
-                    ORDER BY revenue_generated DESC;
-                """)
-                rows = conn.execute(q).mappings().all()
-                return [dict(row) for row in rows]
-        except Exception as e:
-            logger.warning(f"Venues query failed, serving seed venues: {e}")
-
-    # Fallback seed venues
-    return [
-        {
-            "venue_id": 1,
-            "name": "Apex Convention Center",
-            "city": "Bengaluru",
-            "capacity": 1500,
-            "price_per_hour": 5000.0,
-            "events_hosted": 8,
-            "total_bookings": 3570,
-            "utilisation_pct": 82.5,
-            "revenue_generated": 2232830,
-        },
-        {
-            "venue_id": 2,
-            "name": "Symphony Amphitheatre",
-            "city": "Hyderabad",
-            "capacity": 800,
-            "price_per_hour": 3500.0,
-            "events_hosted": 6,
-            "total_bookings": 2240,
-            "utilisation_pct": 74.0,
-            "revenue_generated": 1813240,
-        },
-        {
-            "venue_id": 3,
-            "name": "Innovate Cowork & Hall",
-            "city": "Mumbai",
-            "capacity": 250,
-            "price_per_hour": 1500.0,
-            "events_hosted": 5,
-            "total_bookings": 415,
-            "utilisation_pct": 65.0,
-            "revenue_generated": 499585,
-        },
-        {
-            "venue_id": 4,
-            "name": "Grand Heritage Palace Grounds",
-            "city": "Bengaluru",
-            "capacity": 2500,
-            "price_per_hour": 8500.0,
-            "events_hosted": 4,
-            "total_bookings": 1950,
-            "utilisation_pct": 58.0,
-            "revenue_generated": 1450000,
-        },
-        {
-            "venue_id": 5,
-            "name": "CyberHub Expo Dome",
-            "city": "Hyderabad",
-            "capacity": 1200,
-            "price_per_hour": 4200.0,
-            "events_hosted": 3,
-            "total_bookings": 890,
-            "utilisation_pct": 48.0,
-            "revenue_generated": 620000,
-        },
-        {
-            "venue_id": 6,
-            "name": "Bayside Pavilions & Green",
-            "city": "Mumbai",
-            "capacity": 600,
-            "price_per_hour": 2800.0,
-            "events_hosted": 2,
-            "total_bookings": 480,
-            "utilisation_pct": 40.0,
-            "revenue_generated": 310000,
-        },
-    ]
+    """Venues with events hosted, bookings and revenue."""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT v.venue_id, v.name, v.city, v.capacity, v.price_per_hour, v.is_active,
+                       COUNT(DISTINCT e.event_id)   AS events_hosted,
+                       COUNT(DISTINCT b.booking_id) AS total_bookings,
+                       COALESCE(SUM(b.total_amount), 0) AS revenue_generated
+                FROM venues v
+                LEFT JOIN events   e ON e.venue_id = v.venue_id
+                LEFT JOIN bookings b ON b.event_id = e.event_id AND b.status <> 'cancelled'
+                GROUP BY v.venue_id
+                ORDER BY revenue_generated DESC, v.name;
+            """)).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not load venue analytics", e)
 
 
 @app.get("/api/admin/vendors")
 def get_admin_vendors():
-    """Returns vendor analytics joined with events served."""
-    if is_db_connected():
-        try:
-            with engine.connect() as conn:
-                q = text("""
-                    SELECT 
-                        v.vendor_id,
-                        v.name,
-                        v.service_type,
-                        v.city,
-                        v.phone,
-                        v.price_min,
-                        v.price_max,
-                        v.rating,
-                        v.status,
-                        COUNT(ev.event_id) AS events_served
-                    FROM vendors v
-                    LEFT JOIN event_vendors ev ON v.vendor_id = ev.vendor_id
-                    GROUP BY v.vendor_id, v.name, v.service_type, v.city, v.phone, v.price_min, v.price_max, v.rating, v.status
-                    ORDER BY events_served DESC;
-                """)
-                rows = conn.execute(q).mappings().all()
-                return [dict(row) for row in rows]
-        except Exception as e:
-            logger.warning(f"Vendors query failed: {e}")
-
-    return SEED_VENDORS
+    """Vendors with their service and number of events served (event_vendors)."""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"""
+                SELECT {VENDOR_COLUMNS},
+                       COUNT(ev.event_id) AS events_served,
+                       COALESCE(SUM(ev.agreed_cost) FILTER (WHERE ev.booking_status <> 'cancelled'), 0) AS total_agreed_cost
+                FROM vendors v
+                JOIN services s ON s.service_id = v.service_id
+                LEFT JOIN event_vendors ev ON ev.vendor_id = v.vendor_id
+                GROUP BY v.vendor_id, s.service_name
+                ORDER BY events_served DESC, v.vendor_name;
+            """)).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not load vendor analytics", e)
 
 
 # --------------------------------------------------------------------------
-# CRUD Endpoints for /api/vendors
+# Lookup tables (read-only)
 # --------------------------------------------------------------------------
+@app.get("/api/services")
+def list_services():
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT service_id, service_name FROM services ORDER BY service_name;"
+            )).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not load services", e)
 
+
+@app.get("/api/categories")
+def list_categories():
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT category_id, name, description FROM categories ORDER BY name;"
+            )).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not load categories", e)
+
+
+@app.get("/api/venue-hours")
+def list_venue_hours(venue_id: Optional[int] = Query(None)):
+    """Operating hours for all venues, or for one venue with ?venue_id=."""
+    try:
+        with engine.connect() as conn:
+            sql = """SELECT hours_id, venue_id, day_of_week, open_time, close_time, is_closed
+                     FROM venueoperatinghours"""
+            params = {}
+            if venue_id is not None:
+                sql += " WHERE venue_id = :venue_id"
+                params["venue_id"] = venue_id
+            rows = conn.execute(text(sql + " ORDER BY venue_id, day_of_week;"), params).mappings().all()
+            return [
+                {**dict(r),
+                 "open_time": r["open_time"].strftime("%H:%M:%S") if r["open_time"] else None,
+                 "close_time": r["close_time"].strftime("%H:%M:%S") if r["close_time"] else None}
+                for r in rows
+            ]
+    except Exception as e:
+        _db_error("Could not load operating hours", e)
+
+
+# --------------------------------------------------------------------------
+# Vendors CRUD (/api/vendors)
+# --------------------------------------------------------------------------
 @app.get("/api/vendors")
 def list_vendors(
-    service_type: Optional[str] = Query(None),
-    city: Optional[str] = Query(None),
+    service_id: Optional[int] = Query(None),
     q: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
 ):
-    """Retrieve vendors with optional filters for service_type, city, status, and search query."""
-    if is_db_connected():
-        try:
-            with engine.connect() as conn:
-                conditions = ["1=1"]
-                params = {}
-                if service_type and service_type != "All":
-                    conditions.append("v.service_type = :st")
-                    params["st"] = service_type
-                if city and city != "All":
-                    conditions.append("v.city = :city")
-                    params["city"] = city
-                if status and status != "All":
-                    conditions.append("v.status = :status")
-                    params["status"] = status
-                if q:
-                    conditions.append("(v.name ILIKE :q OR v.city ILIKE :q)")
-                    params["q"] = f"%{q}%"
-
-                query_str = f"""
-                    SELECT 
-                        v.vendor_id, v.name, v.service_type, v.city, v.phone,
-                        v.price_min, v.price_max, v.rating, v.status,
-                        COUNT(ev.event_id) AS events_served
-                    FROM vendors v
-                    LEFT JOIN event_vendors ev ON v.vendor_id = ev.vendor_id
-                    WHERE {' AND '.join(conditions)}
-                    GROUP BY v.vendor_id, v.name, v.service_type, v.city, v.phone, v.price_min, v.price_max, v.rating, v.status
-                    ORDER BY v.name ASC;
-                """
-                rows = conn.execute(text(query_str), params).mappings().all()
-                return [dict(r) for r in rows]
-        except Exception as e:
-            logger.warning(f"DB search failed, falling back to local list: {e}")
-
-    # Fallback in-memory filtering
-    res = list(SEED_VENDORS)
-    if service_type and service_type != "All":
-        res = [v for v in res if v["service_type"].lower() == service_type.lower()]
-    if city and city != "All":
-        res = [v for v in res if v["city"].lower() == city.lower()]
-    if status and status != "All":
-        res = [v for v in res if v["status"].lower() == status.lower()]
+    """List vendors with their service name. Optional filters: service_id, q (name/email/phone)."""
+    conditions, params = ["1=1"], {}
+    if service_id:
+        conditions.append("v.service_id = :service_id")
+        params["service_id"] = service_id
     if q:
-        query_lower = q.lower()
-        res = [v for v in res if query_lower in v["name"].lower() or query_lower in v["city"].lower()]
+        conditions.append("(v.vendor_name ILIKE :q OR v.email ILIKE :q OR v.phone ILIKE :q)")
+        params["q"] = f"%{q}%"
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"""
+                SELECT {VENDOR_COLUMNS}, COUNT(ev.event_id) AS events_served
+                FROM vendors v
+                JOIN services s ON s.service_id = v.service_id
+                LEFT JOIN event_vendors ev ON ev.vendor_id = v.vendor_id
+                WHERE {' AND '.join(conditions)}
+                GROUP BY v.vendor_id, s.service_name
+                ORDER BY v.vendor_name;
+            """), params).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not load vendors", e)
 
-    return res
+
+def _fetch_vendor(conn, vendor_id: int):
+    return conn.execute(text(f"""
+        SELECT {VENDOR_COLUMNS}
+        FROM vendors v JOIN services s ON s.service_id = v.service_id
+        WHERE v.vendor_id = :id;
+    """), {"id": vendor_id}).mappings().one_or_none()
 
 
 @app.get("/api/vendors/{vendor_id}")
 def get_vendor_by_id(vendor_id: int):
-    """Retrieve single vendor by primary key."""
-    if is_db_connected():
-        try:
-            with engine.connect() as conn:
-                q = text("""
-                    SELECT 
-                        v.vendor_id, v.name, v.service_type, v.city, v.phone,
-                        v.price_min, v.price_max, v.rating, v.status,
-                        COUNT(ev.event_id) AS events_served
-                    FROM vendors v
-                    LEFT JOIN event_vendors ev ON v.vendor_id = ev.vendor_id
-                    WHERE v.vendor_id = :id
-                    GROUP BY v.vendor_id, v.name, v.service_type, v.city, v.phone, v.price_min, v.price_max, v.rating, v.status;
-                """)
-                row = conn.execute(q, {"id": vendor_id}).mappings().first()
-                if row:
-                    return dict(row)
-        except Exception as e:
-            logger.warning(f"DB query failed: {e}")
+    try:
+        with engine.connect() as conn:
+            row = _fetch_vendor(conn, vendor_id)
+    except Exception as e:
+        _db_error("Could not load vendor", e)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Vendor not found.")
+    return dict(row)
 
-    for v in SEED_VENDORS:
-        if v["vendor_id"] == vendor_id:
-            return v
-    raise HTTPException(status_code=404, detail="Vendor not found")
+
+def _check_service(conn, service_id):
+    exists = conn.execute(text("SELECT 1 FROM services WHERE service_id = :id;"), {"id": service_id}).scalar()
+    if not exists:
+        raise HTTPException(status_code=400, detail="Selected service does not exist.")
 
 
 @app.post("/api/vendors", status_code=status.HTTP_201_CREATED)
 def create_vendor(vendor: VendorCreate):
-    """Create a new vendor entry."""
-    if is_db_connected():
-        try:
-            with engine.begin() as conn:
-                q = text("""
-                    INSERT INTO vendors (name, service_type, city, phone, price_min, price_max, rating, status)
-                    VALUES (:name, :service_type, :city, :phone, :price_min, :price_max, :rating, :status)
-                    RETURNING vendor_id;
-                """)
-                new_id = conn.execute(q, vendor.dict()).scalar()
-                created = vendor.dict()
-                created["vendor_id"] = new_id
-                created["events_served"] = 0
-                return created
-        except Exception as e:
-            logger.warning(f"DB insert failed: {e}")
-
-    new_id = max([v["vendor_id"] for v in SEED_VENDORS], default=0) + 1
-    new_vendor = vendor.dict()
-    new_vendor["vendor_id"] = new_id
-    new_vendor["events_served"] = 0
-    SEED_VENDORS.append(new_vendor)
-    return new_vendor
+    try:
+        with engine.begin() as conn:
+            _check_service(conn, vendor.service_id)
+            new_id = conn.execute(text("""
+                INSERT INTO vendors (vendor_name, service_id, service_description, phone, email)
+                VALUES (:vendor_name, :service_id, :service_description, :phone, :email)
+                RETURNING vendor_id;
+            """), {
+                "vendor_name": vendor.vendor_name.strip(),
+                "service_id": vendor.service_id,
+                "service_description": vendor.service_description,
+                "phone": vendor.phone,
+                "email": vendor.email,
+            }).scalar_one()
+            return dict(_fetch_vendor(conn, new_id))
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="Invalid service selected.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not create vendor", e)
 
 
 @app.put("/api/vendors/{vendor_id}")
 def update_vendor(vendor_id: int, vendor_data: VendorUpdate):
-    """Update existing vendor details."""
-    if is_db_connected():
-        try:
-            with engine.begin() as conn:
-                fields = []
-                params = {"vendor_id": vendor_id}
-                for k, val in vendor_data.dict(exclude_unset=True).items():
-                    fields.append(f"{k} = :{k}")
-                    params[k] = val
-                if fields:
-                    q = text(f"UPDATE vendors SET {', '.join(fields)} WHERE vendor_id = :vendor_id RETURNING vendor_id;")
-                    res = conn.execute(q, params).scalar()
-                    if not res:
-                        raise HTTPException(status_code=404, detail="Vendor not found")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning(f"DB update failed: {e}")
-
-    for idx, v in enumerate(SEED_VENDORS):
-        if v["vendor_id"] == vendor_id:
-            updated = {**v, **vendor_data.dict(exclude_unset=True)}
-            SEED_VENDORS[idx] = updated
-            return updated
-
-    raise HTTPException(status_code=404, detail="Vendor not found")
+    updates = vendor_data.model_dump(exclude_unset=True)
+    if "vendor_name" in updates and updates["vendor_name"]:
+        updates["vendor_name"] = updates["vendor_name"].strip()
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided.")
+    assignments = ", ".join(f"{k} = :{k}" for k in updates)
+    try:
+        with engine.begin() as conn:
+            if updates.get("service_id") is not None:
+                _check_service(conn, updates["service_id"])
+            found = conn.execute(text(
+                f"UPDATE vendors SET {assignments} WHERE vendor_id = :vendor_id RETURNING vendor_id;"
+            ), {**updates, "vendor_id": vendor_id}).scalar_one_or_none()
+            if found is None:
+                raise HTTPException(status_code=404, detail="Vendor not found.")
+            return dict(_fetch_vendor(conn, vendor_id))
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="Invalid service selected.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not update vendor", e)
 
 
 @app.delete("/api/vendors/{vendor_id}")
 def delete_vendor(vendor_id: int):
-    """Delete a vendor by ID."""
-    if is_db_connected():
-        try:
-            with engine.begin() as conn:
-                q = text("DELETE FROM vendors WHERE vendor_id = :id RETURNING vendor_id;")
-                res = conn.execute(q, {"id": vendor_id}).scalar()
-                if not res:
-                    raise HTTPException(status_code=404, detail="Vendor not found")
-                return {"message": "Vendor deleted successfully", "vendor_id": vendor_id}
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning(f"DB delete failed: {e}")
+    try:
+        with engine.begin() as conn:
+            deleted = conn.execute(text(
+                "DELETE FROM vendors WHERE vendor_id = :id RETURNING vendor_id;"
+            ), {"id": vendor_id}).scalar_one_or_none()
+    except Exception as e:
+        _db_error("Could not delete vendor", e)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Vendor not found.")
+    return {"message": "Vendor deleted successfully", "vendor_id": vendor_id}
 
-    for idx, v in enumerate(SEED_VENDORS):
-        if v["vendor_id"] == vendor_id:
-            deleted = SEED_VENDORS.pop(idx)
-            return {"message": "Vendor deleted successfully", "vendor_id": deleted["vendor_id"]}
 
-    raise HTTPException(status_code=404, detail="Vendor not found")
 
 # --------------------------------------------------------------------------
 # CRUD Endpoints for /api/venues
