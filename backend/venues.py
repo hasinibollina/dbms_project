@@ -4,10 +4,17 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
-from database import get_db
+try:
+    from backend.database import get_db
+    from backend.routes.auth import get_current_user
+    from backend.admin import require_admin
+except ImportError:
+    from database import get_db
+    from routes.auth import get_current_user
+    from admin import require_admin
 
 
-router = APIRouter(prefix="/venues", tags=["Venues"])
+router = APIRouter(prefix="/api/venues", tags=["Venues"])
 
 
 # ============================================================
@@ -56,7 +63,10 @@ class OperatingHoursUpdate(BaseModel):
 # ============================================================
 
 @router.get("/")
-def get_venues(db: Session = Depends(get_db)):
+def get_venues(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
 
     result = db.execute(text("""
         SELECT
@@ -85,6 +95,7 @@ def get_venues(db: Session = Depends(get_db)):
 @router.get("/{venue_id}")
 def get_venue(
     venue_id: int,
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
 
@@ -125,6 +136,7 @@ def get_venue(
 @router.post("/", status_code=201)
 def add_venue(
     venue: VenueCreate,
+    current_admin=Depends(require_admin),
     db: Session = Depends(get_db)
 ):
 
@@ -207,6 +219,7 @@ def add_venue(
 def update_venue(
     venue_id: int,
     venue: VenueUpdate,
+    current_admin=Depends(require_admin),
     db: Session = Depends(get_db)
 ):
 
@@ -310,6 +323,7 @@ def update_venue(
 @router.delete("/{venue_id}")
 def delete_venue(
     venue_id: int,
+    current_admin=Depends(require_admin),
     db: Session = Depends(get_db)
 ):
 
@@ -358,6 +372,7 @@ def delete_venue(
 def add_operating_hours(
     venue_id: int,
     hours: OperatingHoursCreate,
+    current_admin=Depends(require_admin),
     db: Session = Depends(get_db)
 ):
 
@@ -439,6 +454,7 @@ def add_operating_hours(
 def update_operating_hours(
     hours_id: int,
     hours: OperatingHoursUpdate,
+    current_admin=Depends(require_admin),
     db: Session = Depends(get_db)
 ):
 
