@@ -55,7 +55,16 @@ async function request(endpoint, options = {}) {
     }
 
     if (!response.ok) {
-      const errorMessage = data?.detail || data?.message || `Request failed with status ${response.status}`;
+      // FastAPI sends detail as a string, or as a list of {loc, msg} for validation errors
+      let errorMessage = data?.detail ?? data?.message;
+      if (Array.isArray(errorMessage)) {
+        errorMessage = errorMessage
+          .map((d) => (d?.loc ? `${d.loc.slice(1).join('.')}: ${d.msg}` : d?.msg || JSON.stringify(d)))
+          .join('; ');
+      } else if (errorMessage && typeof errorMessage === 'object') {
+        errorMessage = JSON.stringify(errorMessage);
+      }
+      errorMessage = errorMessage || `Request failed with status ${response.status}`;
       const error = new Error(errorMessage);
       error.status = response.status;
       error.data = data;
