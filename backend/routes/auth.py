@@ -9,6 +9,26 @@ try:
 except ImportError:
     from supabase_client import supabase
 
+from sqlalchemy import text
+
+try:
+    from backend.database import engine
+except ImportError:
+    from database import engine
+
+
+def get_profile_role(user_id: str) -> str:
+    """Role comes from public.profiles, the same table admin.py and events.py check."""
+    try:
+        with engine.connect() as conn:
+            role = conn.execute(
+                text("SELECT role FROM public.profiles WHERE id = :user_id"),
+                {"user_id": user_id},
+            ).scalar_one_or_none()
+        return role or "organizer"
+    except Exception:
+        return "organizer" 
+
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 security = HTTPBearer()
