@@ -34,73 +34,42 @@ export default function Login() {
     const password = formData.password;
 
     if (!emailTrimmed || !password) {
-      setErrorMessage('Incorrect email or password');
+      setErrorMessage('Invalid email or password');
       return;
     }
 
     setLoading(true);
 
     try {
-      // 1. Attempt POST /api/auth/login to backend
       const response = await authApi.login({
         email: emailTrimmed,
         password: password,
       });
 
-      if (response && response.role) {
-        const role = response.role.toLowerCase();
+      if (response && response.user && response.access_token) {
+        const user = response.user;
+        const role = (user.role || 'organizer').toLowerCase();
+
         login({
-          user_id: response.user_id,
-          name: response.name || response.full_name || emailTrimmed.split('@')[0],
-          email: response.email || emailTrimmed,
+          user_id: user.id,
+          name: user.full_name,
+          email: user.email || emailTrimmed,
           role: role,
-          token: response.token || 'backend-token',
+          token: response.access_token,
         });
 
-        toast.success(`Welcome, ${response.name || 'User'}!`);
+        toast.success(`Welcome, ${user.full_name || 'Organizer'}!`);
 
-        // Redirect admin to /admin and organizer to /manage-events
         if (role === 'admin') {
           navigate('/admin');
         } else {
           navigate('/manage-events');
         }
-        return;
       } else {
-        throw new Error('Invalid backend login response');
+        throw new Error('Invalid login response from server');
       }
     } catch (err) {
-      // 2. Backend is offline / failed -> fall back to local seed demo accounts
-      console.warn('Backend login endpoint unavailable, checking local demo accounts:', err.message);
-
-      const matchedAccount = DEMO_ACCOUNTS.find(
-        (acc) =>
-          acc.email.toLowerCase() === emailTrimmed &&
-          acc.password === password
-      );
-
-      if (matchedAccount) {
-        const role = matchedAccount.role.toLowerCase();
-        login({
-          user_id: matchedAccount.user_id,
-          name: matchedAccount.name,
-          email: matchedAccount.email,
-          role: role,
-          token: matchedAccount.token,
-        });
-
-        toast.success(`Signed in as ${matchedAccount.name} (${role === 'admin' ? 'Admin' : 'Organizer'})`);
-
-        // Redirect admin to /admin and organizer to /manage-events
-        if (role === 'admin') {
-          navigate('/admin');
-        } else {
-          navigate('/manage-events');
-        }
-      } else {
-        // Wrong credentials show "Incorrect email or password" under the form
-        setErrorMessage('Incorrect email or password');
-      }
+      setErrorMessage(err.message || 'Invalid email or password');
     } finally {
       setLoading(false);
     }
