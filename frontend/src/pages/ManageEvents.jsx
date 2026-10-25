@@ -73,6 +73,17 @@ function toInputDateTime(value) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function formatVenueHours(timeStr) {
+  if (!timeStr) return '';
+  const parts = String(timeStr).split(':');
+  if (parts.length < 2) return String(timeStr);
+  const h = parseInt(parts[0], 10);
+  const m = parts[1];
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${String(h12).padStart(2, '0')}:${m} ${ampm}`;
+}
+
 export default function ManageEvents() {
   const { user } = useAuth();
   const toast = useToast();
@@ -100,6 +111,7 @@ export default function ManageEvents() {
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const [availabilityStatus, setAvailabilityStatus] = useState(null);
 
   // Cancel confirmation modal
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
@@ -178,6 +190,131 @@ export default function ManageEvents() {
     });
   };
 
+  // Selected venue object from list
+  const selectedVenue = useMemo(() => {
+    if (!formData.venue_id) return null;
+    return venues.find((v) => String(v.venue_id || v.id) === String(formData.venue_id)) || null;
+  }, [venues, formData.venue_id]);
+
+  // Capacity warning against selected venue
+  const capacityWarning = useMemo(() => {
+    if (!selectedVenue || !formData.capacity) return '';
+    const cap = parseInt(formData.capacity, 10);
+    const maxCap = parseInt(selectedVenue.capacity, 10);
+    if (!isNaN(cap) && !isNaN(maxCap) && cap > maxCap) {
+      return `Event capacity (${cap}) exceeds venue max capacity (${maxCap}).`;
+    }
+    return '';
+  }, [selectedVenue, formData.capacity]);
+
+  // Real-time time & venue operating hours validation
+  const { timeError, hoursError } = useMemo(() => {
+    if (!formData.start_time || !formData.end_time) {
+      return { timeError: '', hoursError: '' };
+    }
+    const sDate = new Date(formData.start_time);
+    const eDate = new Date(formData.end_time);
+
+    if (isNaN(sDate.getTime()) || isNaN(eDate.getTime())) {
+      return { timeError: 'Invalid date/time format', hoursError: '' };
+    }
+
+    if (eDate <= sDate) {
+      return { timeError: 'End time must be after start time.', hoursError: '' };
+    }
+
+    if (selectedVenue) {
+      const openParts = (selectedVenue.opening_time || '08:00:00').split(':');
+      const closeParts = (selectedVenue.closing_time || '22:00:00').split(':');
+      const openH = parseInt(openParts[0] || '8', 10);
+      const openM = parseInt(openParts[1] || '0', 10);
+      const closeH = parseInt(closeParts[0] || '22', 10);
+      const closeM = parseInt(closeParts[1] || '0', 10);
+
+      const openStr = `${String(openH).padStart(2, '0')}:${String(openM).padStart(2, '0')}`;
+      const closeStr = `${String(closeH).padStart(2, '0')}:${String(closeM).padStart(2, '0')}`;
+
+      const startMinutes = sDate.getHours() * 60 + sDate.getMinutes();
+      const openMinutes = openH * 60 + openM;
+      const endMinutes = eDate.getHours() * 60 + eDate.getMinutes();
+      const closeMinutes = closeH * 60 + closeM;
+
+      const sHourStr = `${String(sDate.getHours()).padStart(2, '0')}:${String(sDate.getMinutes()).padStart(2, '0')}`;
+      const eHourStr = `${String(eDate.getHours()).padStart(2, '0')}:${String(eDate.getMinutes()).padStart(2, '0')}`;
+
+      if (startMinutes < openMinutes) {
+        return {
+          timeError: '',
+          hoursError: `Venue is open ${openStr}-${closeStr}. Your event starts at ${sHourStr}.`,
+        };
+      }
+      if (endMinutes > closeMinutes) {
+        return {
+          timeError: '',
+          hoursError: `Venue is open ${openStr}-${closeStr}. Your event ends at ${eHourStr}.`,
+        };
+      }
+      if (sDate.toDateString() !== eDate.toDateString()) {
+        return {
+          timeError: '',
+          hoursError: `Venue is open ${openStr}-${closeStr} daily. Multi-day/overnight events outside venue hours are not permitted.`,
+        };
+      }
+    }
+
+    return { timeError: '', hoursError: '' };
+  }, [formData.start_time, formData.end_time, selectedVenue]);
+
+  // Debounced availability check
+  useEffect(() => {
+    if (!modalOpen || !formData.venue_id || !formData.start_time || !formData.end_time) {
+      setAvailabilityStatus(null);
+      return;
+    }
+
+    if (timeError || hoursError) {
+      setAvailabilityStatus(null);
+      return;
+    }
+
+    setAvailabilityStatus({ loading: true });
+    const timer = setTimeout(async () => {
+      try {
+        const sIso = new Date(formData.start_time).toISOString();
+        const eIso = new Date(formData.end_time).toISOString();
+        const res = await venuesApi.checkAvailability(
+          formData.venue_id,
+          sIso,
+          eIso,
+          editingEvent?.event_id
+        );
+        if (res.available) {
+          setAvailabilityStatus({ available: true, message: 'Venue available' });
+        } else {
+          setAvailabilityStatus({
+            available: false,
+            message: res.message || 'Venue conflict detected during selected times.',
+          });
+        }
+      } catch (err) {
+        setAvailabilityStatus({
+          available: false,
+          message: err.message || 'Could not verify venue availability.',
+        });
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [
+    modalOpen,
+    formData.venue_id,
+    formData.start_time,
+    formData.end_time,
+    timeError,
+    hoursError,
+    editingEvent?.event_id,
+  ]);
+
   const handleOpenCreate = () => {
     setEditingEvent(null);
     const nextWeek = new Date(Date.now() + 7 * 86400000);
@@ -186,13 +323,14 @@ export default function ManageEvents() {
     setFormData({
       ...EMPTY_FORM,
       category_id: categories[0] ? String(categories[0].category_id) : '',
-      venue_id: venues[0] ? String(venues[0].venue_id) : '',
+      venue_id: venues[0] ? String(venues[0].venue_id || venues[0].id) : '',
       start_time: toInputDateTime(nextWeek),
       end_time: toInputDateTime(endNextWeek),
     });
     setVendorChoices({});
     setOriginalVendorChoices({});
     setFormErrors({});
+    setAvailabilityStatus(null);
     setModalOpen(true);
   };
 
@@ -212,6 +350,7 @@ export default function ManageEvents() {
     setVendorChoices({});
     setOriginalVendorChoices({});
     setFormErrors({});
+    setAvailabilityStatus(null);
     setModalOpen(true);
 
     // Pre-fill the vendors already linked to this event
@@ -237,8 +376,11 @@ export default function ManageEvents() {
     else if (title.length > 150) errs.title = 'Event title cannot exceed 150 characters';
     if (!formData.start_time) errs.start_time = 'Start time is required';
     if (!formData.end_time) errs.end_time = 'End time is required';
-    if (formData.start_time && formData.end_time && new Date(formData.end_time) <= new Date(formData.start_time)) {
-      errs.end_time = 'End time must be later than start time';
+    if (timeError) errs.start_time = timeError;
+    if (hoursError) errs.end_time = hoursError;
+    if (capacityWarning) errs.capacity = capacityWarning;
+    if (availabilityStatus && !availabilityStatus.available) {
+      errs.availability = availabilityStatus.message;
     }
     const capacity = Number(formData.capacity);
     if (!Number.isInteger(capacity) || capacity <= 0) errs.capacity = 'Capacity must be a whole number above 0';
@@ -654,11 +796,19 @@ export default function ManageEvents() {
                   >
                     <option value="">No venue yet</option>
                     {venues.map((v) => (
-                      <option key={v.venue_id} value={String(v.venue_id)}>
-                        {v.name} ({v.city})
+                      <option key={v.venue_id || v.id} value={String(v.venue_id || v.id)}>
+                        {v.name} ({v.city || v.location || 'Location unassigned'})
                       </option>
                     ))}
                   </select>
+                  {selectedVenue && (
+                    <div className="flex items-center gap-1.5 text-[11px] text-ink/70 mt-1">
+                      <Clock className="w-3.5 h-3.5 text-wine flex-shrink-0" />
+                      <span>
+                        Venue hours: <span className="font-semibold text-ink">{formatVenueHours(selectedVenue.opening_time)} - {formatVenueHours(selectedVenue.closing_time)}</span>
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -675,7 +825,9 @@ export default function ManageEvents() {
                     onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
                     className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                   />
-                  {formErrors.start_time && <p className="text-xs text-red-700">{formErrors.start_time}</p>}
+                  {formErrors.start_time && !timeError && !hoursError && (
+                    <p className="text-xs text-red-700">{formErrors.start_time}</p>
+                  )}
                 </div>
 
                 <div className="space-y-1">
@@ -689,9 +841,49 @@ export default function ManageEvents() {
                     onChange={(e) => setFormData({ ...formData, end_time: e.target.value })}
                     className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                   />
-                  {formErrors.end_time && <p className="text-xs text-red-700">{formErrors.end_time}</p>}
+                  {formErrors.end_time && !timeError && !hoursError && (
+                    <p className="text-xs text-red-700">{formErrors.end_time}</p>
+                  )}
                 </div>
               </div>
+
+              {/* Real-time Time, Venue Hours & Conflict Validation Alerts */}
+              {(timeError || hoursError || availabilityStatus) && (
+                <div className="mt-1">
+                  {timeError && (
+                    <div className="text-xs text-red-800 bg-red-50 border border-red-200 px-3 py-2 rounded-xl flex items-center gap-2 font-medium">
+                      <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                      <span>{timeError}</span>
+                    </div>
+                  )}
+                  {!timeError && hoursError && (
+                    <div className="text-xs text-red-800 bg-red-50 border border-red-200 px-3 py-2 rounded-xl flex items-center gap-2 font-medium">
+                      <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                      <span>{hoursError}</span>
+                    </div>
+                  )}
+                  {!timeError && !hoursError && availabilityStatus && (
+                    <div>
+                      {availabilityStatus.loading ? (
+                        <div className="text-xs text-ink/70 bg-sand-dark/30 border border-sand-dark px-3 py-2 rounded-xl flex items-center gap-2">
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-wine flex-shrink-0" />
+                          <span>Checking venue availability…</span>
+                        </div>
+                      ) : availabilityStatus.available ? (
+                        <div className="text-xs text-emerald-800 font-semibold bg-emerald-50 border border-emerald-300 px-3 py-2 rounded-xl flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                          <span>Venue available</span>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-red-800 bg-red-50 border border-red-300 px-3 py-2 rounded-xl flex items-center gap-2 font-medium">
+                          <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                          <span>{availabilityStatus.message}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Ticket Price & Total Capacity */}
               <div className="grid grid-cols-2 gap-3">
@@ -714,9 +906,16 @@ export default function ManageEvents() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Total Capacity <span className="text-red-700">*</span>
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-heading uppercase tracking-wider text-ink">
+                      Total Capacity <span className="text-red-700">*</span>
+                    </label>
+                    {selectedVenue && (
+                      <span className="text-[11px] text-ink/60">
+                        Venue cap: <span className="font-semibold text-ink/80">{selectedVenue.capacity}</span>
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="number"
                     min="1"
@@ -725,7 +924,13 @@ export default function ManageEvents() {
                     onChange={(e) => setFormData({ ...formData, capacity: e.target.value })}
                     className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                   />
-                  {formErrors.capacity && (
+                  {capacityWarning && (
+                    <p className="text-xs text-red-700 flex items-center gap-1 mt-1 font-medium">
+                      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span>{capacityWarning}</span>
+                    </p>
+                  )}
+                  {formErrors.capacity && !capacityWarning && (
                     <p className="text-xs text-red-700">{formErrors.capacity}</p>
                   )}
                 </div>
@@ -829,8 +1034,15 @@ export default function ManageEvents() {
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
-                  className="px-5 py-2.5 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-sm disabled:opacity-60"
+                  disabled={
+                    saving ||
+                    Boolean(timeError) ||
+                    Boolean(hoursError) ||
+                    Boolean(capacityWarning) ||
+                    Boolean(availabilityStatus?.loading) ||
+                    Boolean(availabilityStatus && !availabilityStatus.available)
+                  }
+                  className="px-5 py-2.5 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving ? 'Saving…' : editingEvent ? 'Save Changes' : 'Create Event'}
                 </button>

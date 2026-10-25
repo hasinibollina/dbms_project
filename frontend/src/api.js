@@ -133,6 +133,12 @@ export const venuesApi = {
 
   delete: (id) => request(`/api/venues/${id}`, { method: 'DELETE' }),
 
+  checkAvailability: (venueId, start, end, excludeEventId) => {
+    const params = new URLSearchParams({ start, end });
+    if (excludeEventId) params.append('exclude_event_id', excludeEventId);
+    return request(`/api/venues/${venueId}/availability?${params.toString()}`);
+  },
+
   // Saves a 7-day schedule: updates days that already have a row, inserts the rest.
   updateHours: async (id, hoursArray) => {
     const existing = await request(`/api/venue-hours?venue_id=${id}`);

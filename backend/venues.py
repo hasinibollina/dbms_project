@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, time
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -30,6 +31,8 @@ class VenueCreate(BaseModel):
     contact_phone: str | None = Field(default=None, max_length=20)
     description: str | None = None
     image_url: str | None = Field(default=None, max_length=500)
+    opening_time: str | None = None
+    closing_time: str | None = None
 
 
 class VenueUpdate(BaseModel):
@@ -42,6 +45,8 @@ class VenueUpdate(BaseModel):
     description: str | None = None
     image_url: str | None = Field(default=None, max_length=500)
     is_active: bool | None = None
+    opening_time: str | None = None
+    closing_time: str | None = None
 
 
 class OperatingHoursCreate(BaseModel):
@@ -58,13 +63,34 @@ class OperatingHoursUpdate(BaseModel):
     is_closed: bool | None = None
 
 
+def _format_venue_row(row) -> dict:
+    d = dict(row)
+    d["id"] = d.get("venue_id")
+    d["location"] = d.get("city")
+    if d.get("opening_time") is not None:
+        if isinstance(d["opening_time"], (datetime, time)):
+            d["opening_time"] = d["opening_time"].strftime("%H:%M:%S")
+        else:
+            d["opening_time"] = str(d["opening_time"])
+    else:
+        d["opening_time"] = "08:00:00"
+
+    if d.get("closing_time") is not None:
+        if isinstance(d["closing_time"], (datetime, time)):
+            d["closing_time"] = d["closing_time"].strftime("%H:%M:%S")
+        else:
+            d["closing_time"] = str(d["closing_time"])
+    else:
+        d["closing_time"] = "22:00:00"
+    return d
+
+
 # ============================================================
 # GET: View all venues
 # ============================================================
 
 @router.get("/")
 def get_venues(
-    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
 
@@ -80,12 +106,129 @@ def get_venues(
             description,
             image_url,
             is_active,
+            opening_time,
+            closing_time,
             created_at
         FROM venues
         ORDER BY venue_id
     """))
 
-    return [dict(row) for row in result.mappings().all()]
+    return [_format_venue_row(row) for row in result.mappings().all()]
+
+
+# ============================================================
+# GET: Check venue slot availability
+# ============================================================
+
+@router.get("/{venue_id}/availability")
+def check_venue_availability(
+    venue_id: int,
+    start: str = Query(..., description="Start ISO datetime"),
+    end: str = Query(..., description="End ISO datetime"),
+    exclude_event_id: int | None = Query(default=None, description="Event ID to exclude when editing"),
+    db: Session = Depends(get_db)
+):
+    try:
+        start_clean = start.replace("Z", "+00:00")
+        end_clean = end.replace("Z", "+00:00")
+        start_dt = datetime.fromisoformat(start_clean)
+        end_dt = datetime.fromisoformat(end_clean)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid datetime format. Expected ISO-8601 string."
+        )
+
+    if end_dt <= start_dt:
+        return {
+            "available": False,
+            "conflicts": [],
+            "message": "End time must be after start time."
+        }
+
+    venue = db.execute(text("""
+        SELECT venue_id, name, opening_time, closing_time, capacity
+        FROM venues
+        WHERE venue_id = :venue_id
+    """), {"venue_id": venue_id}).mappings().one_or_none()
+
+    if venue is None:
+        raise HTTPException(status_code=404, detail="Venue not found.")
+
+    open_time = venue["opening_time"] or time(8, 0)
+    close_time = venue["closing_time"] or time(22, 0)
+    open_str = open_time.strftime("%H:%M")
+    close_str = close_time.strftime("%H:%M")
+
+    # Time validation: within opening and closing hours
+    if start_dt.time() < open_time:
+        return {
+            "available": False,
+            "conflicts": [],
+            "message": f"Venue is open {open_str}-{close_str}. Your event starts at {start_dt.strftime('%H:%M')}."
+        }
+
+    if end_dt.time() > close_time:
+        return {
+            "available": False,
+            "conflicts": [],
+            "message": f"Venue is open {open_str}-{close_str}. Your event ends at {end_dt.strftime('%H:%M')}."
+        }
+
+    if start_dt.date() != end_dt.date():
+        return {
+            "available": False,
+            "conflicts": [],
+            "message": f"Venue is open {open_str}-{close_str} daily. Multi-day/overnight events outside venue hours are not permitted."
+        }
+
+    # Overlap rule: existing.start_time < new.end_time AND existing.end_time > new.start_time
+    params = {
+        "venue_id": venue_id,
+        "start_time": start_dt,
+        "end_time": end_dt,
+    }
+    exclude_clause = ""
+    if exclude_event_id is not None:
+        exclude_clause = "AND event_id <> :exclude_event_id"
+        params["exclude_event_id"] = exclude_event_id
+
+    conflicts = db.execute(text(f"""
+        SELECT event_id, title, start_time, end_time
+        FROM events
+        WHERE venue_id = :venue_id
+          AND status <> 'cancelled'
+          AND start_time < :end_time
+          AND end_time > :start_time
+          {exclude_clause}
+        ORDER BY start_time ASC
+    """), params).mappings().all()
+
+    if conflicts:
+        c = conflicts[0]
+        c_start = c["start_time"].strftime("%H:%M")
+        c_end = c["end_time"].strftime("%H:%M")
+        c_date = c["start_time"].strftime("%d-%m-%Y")
+        msg = f"Venue already booked: '{c['title']}' from {c_start} to {c_end} on {c_date}."
+        return {
+            "available": False,
+            "conflicts": [
+                {
+                    "event_id": row["event_id"],
+                    "title": row["title"],
+                    "start_time": row["start_time"].isoformat(),
+                    "end_time": row["end_time"].isoformat(),
+                }
+                for row in conflicts
+            ],
+            "message": msg
+        }
+
+    return {
+        "available": True,
+        "conflicts": [],
+        "message": "Venue available"
+    }
 
 
 # ============================================================
@@ -95,7 +238,6 @@ def get_venues(
 @router.get("/{venue_id}")
 def get_venue(
     venue_id: int,
-    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
 
@@ -111,6 +253,8 @@ def get_venue(
             description,
             image_url,
             is_active,
+            opening_time,
+            closing_time,
             created_at
         FROM venues
         WHERE venue_id = :venue_id
@@ -126,7 +270,7 @@ def get_venue(
             detail="Venue not found."
         )
 
-    return dict(venue)
+    return _format_venue_row(venue)
 
 
 # ============================================================
@@ -153,6 +297,8 @@ def add_venue(
                     contact_phone,
                     description,
                     image_url,
+                    opening_time,
+                    closing_time,
                     is_active
                 )
             VALUES
@@ -165,6 +311,8 @@ def add_venue(
                     :contact_phone,
                     :description,
                     :image_url,
+                    COALESCE(CAST(:opening_time AS TIME), '08:00:00'),
+                    COALESCE(CAST(:closing_time AS TIME), '22:00:00'),
                     TRUE
                 )
             RETURNING
@@ -177,6 +325,8 @@ def add_venue(
                 contact_phone,
                 description,
                 image_url,
+                opening_time,
+                closing_time,
                 is_active,
                 created_at
         """), {
@@ -188,11 +338,13 @@ def add_venue(
             "price_per_hour": venue.price_per_hour,
             "contact_phone": venue.contact_phone,
             "description": venue.description,
-            "image_url": venue.image_url
+            "image_url": venue.image_url,
+            "opening_time": venue.opening_time,
+            "closing_time": venue.closing_time,
 
         })
 
-        saved = dict(result.mappings().one())
+        saved = _format_venue_row(result.mappings().one())
 
         db.commit()
 
@@ -251,7 +403,9 @@ def update_venue(
         "contact_phone",
         "description",
         "image_url",
-        "is_active"
+        "is_active",
+        "opening_time",
+        "closing_time",
     }
 
     updates = {
@@ -281,6 +435,8 @@ def update_venue(
                 contact_phone,
                 description,
                 image_url,
+                opening_time,
+                closing_time,
                 is_active,
                 created_at
         """), {
@@ -303,7 +459,7 @@ def update_venue(
 
         return {
             "message": "Venue updated successfully",
-            "venue": dict(row)
+            "venue": _format_venue_row(row)
         }
 
     except IntegrityError:
