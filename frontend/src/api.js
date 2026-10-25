@@ -214,6 +214,20 @@ export const eventsApi = {
 };
 
 // Admin Analytics API
+// Bookings API (backend/bookings.py is mounted at /bookings, no /api prefix)
+export const bookingsApi = {
+  create: ({ event_id, ticket_quantity }) =>
+    request('/bookings/', {
+      method: 'POST',
+      body: JSON.stringify({ event_id: String(event_id), ticket_quantity }),
+    }),
+  pay: ({ booking_id, payment_method }) =>
+    request('/bookings/pay', {
+      method: 'POST',
+      body: JSON.stringify({ booking_id: String(booking_id), payment_method }),
+    }),
+};
+
 export const adminApi = {
   getStats: () => request('/api/admin/stats'),
   getEvents: () => request('/api/admin/events'),
