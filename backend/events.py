@@ -400,7 +400,7 @@ def add_vendor_to_event(
                         :vendor_id,
                         :service_id,
                         :agreed_cost,
-                        'pending'
+                        'requested'  -- allowed by the event_vendors booking_status CHECK: requested / confirmed / cancelled
                     )
                     RETURNING
                         event_id,

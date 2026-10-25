@@ -21,7 +21,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
-import { eventsApi, categoriesApi, venuesApi } from '../api';
+import { eventsApi, categoriesApi, venuesApi, vendorsApi, servicesApi } from '../api';
 
 // Values allowed by the events.status CHECK constraint in the database
 const STATUS_TABS = [
@@ -80,6 +80,13 @@ export default function ManageEvents() {
   const [events, setEvents] = useState([]);
   const [categories, setCategories] = useState([]);
   const [venues, setVenues] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [services, setServices] = useState([]);
+  // Vendor choice per service in the form: { [service_id]: { vendor_id, agreed_cost } }
+  const [vendorChoices, setVendorChoices] = useState({});
+  // What was saved before editing, to work out what to add/remove
+  const [originalVendorChoices, setOriginalVendorChoices] = useState({});
+  const [loadingEventVendors, setLoadingEventVendors] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -105,14 +112,18 @@ export default function ManageEvents() {
     setLoading(true);
     setLoadError('');
     try {
-      const [mine, categoryRows, venueRows] = await Promise.all([
+      const [mine, categoryRows, venueRows, vendorRows, serviceRows] = await Promise.all([
         eventsApi.getMine(),
         categoriesApi.getAll().catch(() => []),
         venuesApi.getAll().catch(() => []),
+        vendorsApi.getAll().catch(() => []),
+        servicesApi.getAll().catch(() => []),
       ]);
       setEvents(Array.isArray(mine) ? mine : []);
       setCategories(Array.isArray(categoryRows) ? categoryRows : []);
       setVenues(Array.isArray(venueRows) ? venueRows.filter((v) => v.is_active !== false) : []);
+      setVendors(Array.isArray(vendorRows) ? vendorRows : []);
+      setServices(Array.isArray(serviceRows) ? serviceRows : []);
     } catch (err) {
       setEvents([]);
       setLoadError(err.message || 'Could not load your events.');
@@ -137,6 +148,24 @@ export default function ManageEvents() {
     });
   }, [events, statusFilter, searchQuery]);
 
+  // Only services that have at least one vendor get a dropdown
+  const vendorGroups = useMemo(() => {
+    return services
+      .map((s) => ({
+        ...s,
+        vendors: vendors.filter((v) => Number(v.service_id) === Number(s.service_id)),
+      }))
+      .filter((g) => g.vendors.length > 0);
+  }, [services, vendors]);
+
+  const setVendorChoice = (serviceId, changes) => {
+    setVendorChoices((prev) => {
+      const next = { ...prev, [serviceId]: { vendor_id: '', agreed_cost: '0', ...prev[serviceId], ...changes } };
+      if (!next[serviceId].vendor_id) delete next[serviceId];
+      return next;
+    });
+  };
+
   const handleOpenCreate = () => {
     setEditingEvent(null);
     const nextWeek = new Date(Date.now() + 7 * 86400000);
@@ -149,6 +178,8 @@ export default function ManageEvents() {
       start_time: toInputDateTime(nextWeek),
       end_time: toInputDateTime(endNextWeek),
     });
+    setVendorChoices({});
+    setOriginalVendorChoices({});
     setFormErrors({});
     setModalOpen(true);
   };
@@ -166,8 +197,25 @@ export default function ManageEvents() {
       status: event.status || 'published',
       description: event.description || '',
     });
+    setVendorChoices({});
+    setOriginalVendorChoices({});
     setFormErrors({});
     setModalOpen(true);
+
+    // Pre-fill the vendors already linked to this event
+    setLoadingEventVendors(true);
+    eventsApi
+      .getVendors(event.event_id)
+      .then((rows) => {
+        const choices = {};
+        (rows || []).forEach((r) => {
+          choices[r.service_id] = { vendor_id: String(r.vendor_id), agreed_cost: String(r.agreed_cost ?? 0) };
+        });
+        setVendorChoices(choices);
+        setOriginalVendorChoices(choices);
+      })
+      .catch((err) => toast.error(`Could not load this event's vendors: ${err.message}`))
+      .finally(() => setLoadingEventVendors(false));
   };
 
   const validateForm = () => {
@@ -183,6 +231,9 @@ export default function ManageEvents() {
     const capacity = Number(formData.capacity);
     if (!Number.isInteger(capacity) || capacity <= 0) errs.capacity = 'Capacity must be a whole number above 0';
     if (formData.ticket_price === '' || Number(formData.ticket_price) < 0) errs.ticket_price = 'Price cannot be negative';
+    if (Object.values(vendorChoices).some((c) => c.agreed_cost === '' || Number(c.agreed_cost) < 0)) {
+      errs.vendors = 'Agreed cost must be 0 or more for every selected vendor';
+    }
     setFormErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -205,21 +256,53 @@ export default function ManageEvents() {
     };
 
     setSaving(true);
+    let eventId;
     try {
       if (editingEvent) {
         await eventsApi.update(editingEvent.event_id, payload);
-        toast.success(`Event "${payload.title}" updated.`);
+        eventId = editingEvent.event_id;
       } else {
-        await eventsApi.create(payload);
-        toast.success(`Event "${payload.title}" created.`);
+        const created = await eventsApi.create(payload);
+        eventId = created.event_id;
       }
-      setModalOpen(false);
-      await loadEvents();
     } catch (err) {
       toast.error(`Could not save event: ${err.message}`);
-    } finally {
       setSaving(false);
+      return;
     }
+
+    // Sync vendors: remove changed/cleared ones first, then add the new choices
+    // (the backend allows only one vendor per service per event).
+    const vendorErrors = [];
+    const serviceIds = new Set([...Object.keys(originalVendorChoices), ...Object.keys(vendorChoices)]);
+    for (const serviceId of serviceIds) {
+      const before = originalVendorChoices[serviceId];
+      const after = vendorChoices[serviceId];
+      const unchanged =
+        before && after && before.vendor_id === after.vendor_id && Number(before.agreed_cost) === Number(after.agreed_cost);
+      if (unchanged) continue;
+      try {
+        if (before) await eventsApi.removeVendor(eventId, Number(before.vendor_id));
+        if (after) {
+          await eventsApi.addVendor(eventId, {
+            vendor_id: Number(after.vendor_id),
+            agreed_cost: Number(after.agreed_cost || 0),
+          });
+        }
+      } catch (err) {
+        const name = vendors.find((v) => String(v.vendor_id) === String((after || before).vendor_id))?.vendor_name;
+        vendorErrors.push(`${name || 'Vendor'}: ${err.message}`);
+      }
+    }
+
+    if (vendorErrors.length) {
+      toast.error(`Event saved, but some vendors failed — ${vendorErrors.join('; ')}`);
+    } else {
+      toast.success(`Event "${payload.title}" ${editingEvent ? 'updated' : 'created'}.`);
+    }
+    setModalOpen(false);
+    setSaving(false);
+    await loadEvents();
   };
 
   // Cancelling sets status = 'cancelled' (the row is kept, not deleted)
@@ -610,6 +693,62 @@ export default function ManageEvents() {
                     <p className="text-xs text-red-700">{formErrors.capacity}</p>
                   )}
                 </div>
+              </div>
+
+              {/* Vendors: one dropdown per service (one vendor per service per event) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-heading uppercase tracking-wider text-ink">Vendors</label>
+                  {loadingEventVendors && <span className="text-[10px] text-ink/60">Loading selected vendors…</span>}
+                </div>
+                {vendorGroups.length === 0 ? (
+                  <p className="text-xs text-ink/60">No vendors available yet. An admin can add them in Manage Vendors.</p>
+                ) : (
+                  <div className="space-y-2 rounded-xl border border-sand-dark p-3 bg-sand-dark/15">
+                    {vendorGroups.map((g) => {
+                      const choice = vendorChoices[g.service_id];
+                      return (
+                        <div key={g.service_id} className="grid grid-cols-1 sm:grid-cols-[1fr_8rem] gap-2 items-end">
+                          <div className="space-y-1 min-w-0">
+                            <label htmlFor={`vendor-${g.service_id}`} className="block text-[10px] font-semibold uppercase tracking-wider text-wine">
+                              {g.service_name}
+                            </label>
+                            <select
+                              id={`vendor-${g.service_id}`}
+                              value={choice?.vendor_id || ''}
+                              onChange={(e) => setVendorChoice(g.service_id, { vendor_id: e.target.value })}
+                              className="w-full px-3 py-2 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
+                            >
+                              <option value="">No {g.service_name.toLowerCase()} vendor</option>
+                              {g.vendors.map((v) => (
+                                <option key={v.vendor_id} value={String(v.vendor_id)}>
+                                  {v.vendor_name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          {choice && (
+                            <div className="space-y-1">
+                              <label htmlFor={`vendor-cost-${g.service_id}`} className="block text-[10px] font-semibold uppercase tracking-wider text-ink/70">
+                                Agreed cost (₹)
+                              </label>
+                              <input
+                                id={`vendor-cost-${g.service_id}`}
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={choice.agreed_cost}
+                                onChange={(e) => setVendorChoice(g.service_id, { agreed_cost: e.target.value })}
+                                className="w-full px-3 py-2 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {formErrors.vendors && <p className="text-xs text-red-700">{formErrors.vendors}</p>}
               </div>
 
               {/* Status */}
