@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -53,7 +53,7 @@ def get_vendors(
 
 
 # POST: Only admins can add vendors
-@router.post("", status_code=201)
+@router.post("", status_code=status.HTTP_201_CREATED)
 def add_vendor(
     vendor: VendorCreate,
     user=Depends(require_admin),
@@ -86,7 +86,7 @@ def add_vendor(
     except IntegrityError:
         db.rollback()
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid service_id or vendor data."
         )
 
@@ -103,12 +103,18 @@ def update_vendor(
 
     if not changes:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="No fields provided."
         )
 
     if "vendor_name" in changes and changes["vendor_name"] is not None:
         changes["vendor_name"] = changes["vendor_name"].strip()
+
+        if not changes["vendor_name"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Vendor name cannot be empty."
+            )
 
     if "email" in changes and changes["email"] is not None:
         changes["email"] = str(changes["email"])
@@ -127,11 +133,62 @@ def update_vendor(
         if key in fields
     }
 
-    assignments = ", ".join(
-        f"{key} = :{key}" for key in updates
-    )
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid fields provided."
+        )
 
     try:
+        # Lock the vendor row to avoid conflicting concurrent updates.
+        existing_vendor = db.execute(text("""
+            SELECT vendor_id, service_id
+            FROM vendors
+            WHERE vendor_id = :vendor_id
+            FOR UPDATE
+        """), {
+            "vendor_id": vendor_id
+        }).mappings().one_or_none()
+
+        if existing_vendor is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Vendor not found."
+            )
+
+        # Prevent changing the service of a vendor who is assigned
+        # to an event. Keeping the same service_id is allowed.
+        if (
+            "service_id" in updates
+            and updates["service_id"] is not None
+            and updates["service_id"] != existing_vendor["service_id"]
+        ):
+            assignment_query = text("""
+                SELECT 1
+                FROM event_vendors
+                WHERE vendor_id = :vendor_id
+                LIMIT 1
+            """)
+
+            is_assigned = db.execute(
+                assignment_query,
+                {"vendor_id": vendor_id}
+            ).scalar_one_or_none()
+
+            if is_assigned is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "This vendor is assigned to an event, so their "
+                        "service cannot be changed until all event "
+                        "assignments are removed."
+                    )
+                )
+
+        assignments = ", ".join(
+            f"{key} = :{key}" for key in updates
+        )
+
         result = db.execute(text(f"""
             UPDATE vendors
             SET {assignments}
@@ -146,9 +203,8 @@ def update_vendor(
         row = result.mappings().one_or_none()
 
         if row is None:
-            db.rollback()
             raise HTTPException(
-                status_code=404,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail="Vendor not found."
             )
 
@@ -160,11 +216,22 @@ def update_vendor(
             "vendor": saved
         }
 
+    except HTTPException:
+        db.rollback()
+        raise
+
     except IntegrityError:
         db.rollback()
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid service_id or vendor data."
+        )
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not update vendor."
         )
 
 
@@ -180,14 +247,15 @@ def delete_vendor(
             DELETE FROM vendors
             WHERE vendor_id = :vendor_id
             RETURNING vendor_id
-        """), {"vendor_id": vendor_id})
+        """), {
+            "vendor_id": vendor_id
+        })
 
         deleted = result.scalar_one_or_none()
 
         if deleted is None:
-            db.rollback()
             raise HTTPException(
-                status_code=404,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail="Vendor not found."
             )
 
@@ -198,9 +266,20 @@ def delete_vendor(
             "vendor_id": vendor_id
         }
 
+    except HTTPException:
+        db.rollback()
+        raise
+
     except IntegrityError:
         db.rollback()
         raise HTTPException(
-            status_code=409,
+            status_code=status.HTTP_409_CONFLICT,
             detail="Vendor cannot be deleted because it is in use."
+        )
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not delete vendor."
         )
