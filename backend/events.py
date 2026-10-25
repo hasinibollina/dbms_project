@@ -1,6 +1,6 @@
 """Event CRUD endpoints with role and ownership checks."""
 import logging
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
@@ -155,6 +155,101 @@ def get_event(event_id: int):
     return dict(row)
 
 
+def validate_venue_booking(
+    conn,
+    venue_id: Optional[int],
+    start_time: datetime,
+    end_time: datetime,
+    capacity: Optional[int],
+    event_status: str,
+    exclude_event_id: Optional[int] = None,
+):
+    """Server-side venue validation: hours, capacity limit, and concurrency-locked overlap conflict check."""
+    if venue_id is None:
+        return
+
+    # Lock venue row in transaction to serialize concurrent bookings and prevent race conditions
+    venue = conn.execute(
+        text("""
+            SELECT venue_id, name, capacity, opening_time, closing_time
+            FROM venues
+            WHERE venue_id = :venue_id
+            FOR UPDATE
+        """),
+        {"venue_id": venue_id},
+    ).mappings().one_or_none()
+
+    if venue is None:
+        raise HTTPException(status_code=400, detail="Selected venue does not exist")
+
+    # 1. Capacity validation
+    if capacity is not None and capacity > venue["capacity"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Event capacity ({capacity}) exceeds venue maximum capacity ({venue['capacity']})"
+        )
+
+    # 2. Venue operating hours validation
+    open_time = venue["opening_time"] or time(8, 0)
+    close_time = venue["closing_time"] or time(22, 0)
+    open_str = open_time.strftime("%H:%M")
+    close_str = close_time.strftime("%H:%M")
+
+    if start_time.time() < open_time:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Venue is open {open_str}-{close_str}. Your event starts at {start_time.strftime('%H:%M')}."
+        )
+
+    if end_time.time() > close_time:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Venue is open {open_str}-{close_str}. Your event ends at {end_time.strftime('%H:%M')}."
+        )
+
+    if start_time.date() != end_time.date():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Venue is open {open_str}-{close_str} daily. Multi-day/overnight events outside venue hours are not permitted."
+        )
+
+    # 3. Overlap conflict validation: existing.start_time < new.end_time AND existing.end_time > new.start_time
+    if event_status != "cancelled":
+        params = {
+            "venue_id": venue_id,
+            "start_time": start_time,
+            "end_time": end_time,
+        }
+        exclude_clause = ""
+        if exclude_event_id is not None:
+            exclude_clause = "AND event_id <> :exclude_event_id"
+            params["exclude_event_id"] = exclude_event_id
+
+        conflict = conn.execute(
+            text(f"""
+                SELECT event_id, title, start_time, end_time
+                FROM events
+                WHERE venue_id = :venue_id
+                  AND status <> 'cancelled'
+                  AND start_time < :end_time
+                  AND end_time > :start_time
+                  {exclude_clause}
+                ORDER BY start_time ASC
+                LIMIT 1
+            """),
+            params,
+        ).mappings().one_or_none()
+
+        if conflict is not None:
+            c_start = conflict["start_time"].strftime("%H:%M")
+            c_end = conflict["end_time"].strftime("%H:%M")
+            c_date = conflict["start_time"].strftime("%d-%m-%Y")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Venue already booked: '{conflict['title']}' from {c_start} to {c_end} on {c_date}."
+            )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_event(event: EventCreate, user=Depends(require_event_manager)):
     """Create an event; organizer_id always comes from the verified token."""
@@ -166,6 +261,16 @@ def create_event(event: EventCreate, user=Depends(require_event_manager)):
 
     try:
         with engine.begin() as conn:
+            # Concurrency-locked validation against venue operating hours, capacity, and overlaps
+            validate_venue_booking(
+                conn=conn,
+                venue_id=values.get("venue_id"),
+                start_time=values["start_time"],
+                end_time=values["end_time"],
+                capacity=values.get("capacity"),
+                event_status=values["status"],
+            )
+
             row = conn.execute(
                 text(f"""
                     INSERT INTO events
@@ -179,8 +284,14 @@ def create_event(event: EventCreate, user=Depends(require_event_manager)):
                 {**values, "organizer_id": str(user.id)},
             ).mappings().one()
             return dict(row)
-    except IntegrityError:
-        raise HTTPException(status_code=400, detail="Invalid category or venue")
+    except IntegrityError as exc:
+        err_msg = str(exc)
+        if "23P01" in err_msg or "Venue booking conflict" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Venue booking conflict: Another active event is already scheduled at this venue during the selected time period."
+            )
+        raise HTTPException(status_code=400, detail="Invalid category or venue data")
     except HTTPException:
         raise
     except Exception:
@@ -207,7 +318,7 @@ def update_event(event_id: int, changes: EventUpdate, user=Depends(require_event
     try:
         with engine.begin() as conn:
             existing = conn.execute(
-                text("SELECT organizer_id, start_time, end_time FROM events WHERE event_id = :id"),
+                text("SELECT organizer_id, start_time, end_time, venue_id, capacity, status FROM events WHERE event_id = :id"),
                 {"id": event_id},
             ).mappings().one_or_none()
             if existing is None:
@@ -220,6 +331,20 @@ def update_event(event_id: int, changes: EventUpdate, user=Depends(require_event
             if start_time is not None and end_time is not None and end_time <= start_time:
                 raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
+            venue_id = updates.get("venue_id", existing["venue_id"])
+            capacity = updates.get("capacity", existing["capacity"])
+            event_status = updates.get("status", existing["status"])
+
+            validate_venue_booking(
+                conn=conn,
+                venue_id=venue_id,
+                start_time=start_time,
+                end_time=end_time,
+                capacity=capacity,
+                event_status=event_status,
+                exclude_event_id=event_id,
+            )
+
             assignments = ", ".join(f"{key} = :{key}" for key in updates)
             row = conn.execute(
                 text(f"UPDATE events SET {assignments} WHERE event_id = :id RETURNING {EVENT_COLUMNS}"),
@@ -228,7 +353,13 @@ def update_event(event_id: int, changes: EventUpdate, user=Depends(require_event
             return dict(row)
     except HTTPException:
         raise
-    except IntegrityError:
+    except IntegrityError as exc:
+        err_msg = str(exc)
+        if "23P01" in err_msg or "Venue booking conflict" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Venue booking conflict: Another active event is already scheduled at this venue during the selected time period."
+            )
         raise HTTPException(status_code=400, detail="Invalid event data")
     except Exception:
         logger.exception("Could not update event")

@@ -7,7 +7,7 @@ vendors, venues, and lookup endpoints.
 
 import logging
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
@@ -32,9 +32,11 @@ except ImportError:
     from reviews import router as reviews_router
 
 try:
-    from backend.database import engine
+    from backend.database import engine, get_db
+    from backend.venues import check_venue_availability
 except ImportError:
-    from database import engine
+    from database import engine, get_db
+    from venues import check_venue_availability
 
 
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +74,17 @@ app.include_router(admin_router)
 app.include_router(events_router)
 app.include_router(vendors_router)
 app.include_router(venues_router)
+
+
+@app.get("/venues/{venue_id}/availability", tags=["Venues"])
+def check_venue_availability_alias(
+    venue_id: int,
+    start: str = Query(..., description="Start ISO datetime"),
+    end: str = Query(..., description="End ISO datetime"),
+    exclude_event_id: int | None = Query(default=None),
+    db=Depends(get_db)
+):
+    return check_venue_availability(venue_id, start, end, exclude_event_id, db)
 
 
 # ============================================================
