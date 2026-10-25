@@ -28,23 +28,26 @@ class ReviewCreate(BaseModel):
     comment: Optional[str] = Field(default=None, max_length=1000)
 
 
+# Create a review
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_review(
     review: ReviewCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    user_id = current_user.id
+    user_id = str(current_user.id)
 
     try:
-        # 1. Verify that the user has a confirmed booking
-        #    and a successful payment for this event.
+        # 1. Verify confirmed booking, successful payment,
+        #    and that the event has completely ended.
         eligibility_query = text("""
             SELECT b.booking_id
             FROM bookings b
+            JOIN events e ON e.event_id = b.event_id
             WHERE b.user_id = :user_id
               AND b.event_id = :event_id
               AND b.status = 'CONFIRMED'
+              AND e.end_time < CURRENT_TIMESTAMP
               AND EXISTS (
                   SELECT 1
                   FROM payments p
@@ -57,7 +60,7 @@ def create_review(
         booking_id = db.execute(
             eligibility_query,
             {
-                "user_id": str(user_id),
+                "user_id": user_id,
                 "event_id": review.event_id
             }
         ).scalar_one_or_none()
@@ -66,13 +69,13 @@ def create_review(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
-                    "You must have a confirmed booking and "
-                    "successful payment for this event to review it."
+                    "You must have a confirmed booking, successful "
+                    "payment, and the event must have ended before "
+                    "you can review it."
                 )
             )
 
-        # 2. Prevent duplicate reviews by the same user
-        #    for the same event.
+        # 2. Prevent duplicate reviews for the same event.
         duplicate_query = text("""
             SELECT review_id
             FROM reviews
@@ -84,7 +87,7 @@ def create_review(
         existing_review = db.execute(
             duplicate_query,
             {
-                "user_id": str(user_id),
+                "user_id": user_id,
                 "event_id": review.event_id
             }
         ).scalar_one_or_none()
@@ -95,7 +98,7 @@ def create_review(
                 detail="You have already reviewed this event."
             )
 
-        # 3. Insert the review using the authenticated user's ID.
+        # 3. Insert the review.
         insert_query = text("""
             INSERT INTO reviews (
                 user_id,
@@ -123,7 +126,7 @@ def create_review(
         result = db.execute(
             insert_query,
             {
-                "user_id": str(user_id),
+                "user_id": user_id,
                 "event_id": review.event_id,
                 "rating": review.rating,
                 "comment": (
@@ -151,6 +154,8 @@ def create_review(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not submit review."
         )
+
+
 # Edit an existing review
 @router.put("/{review_id}")
 def update_review(
@@ -194,7 +199,7 @@ def update_review(
         if result is None:
             db.rollback()
             raise HTTPException(
-                status_code=404,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail="Review not found or you do not own this review."
             )
 
@@ -207,10 +212,11 @@ def update_review(
 
     except HTTPException:
         raise
+
     except Exception:
         db.rollback()
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update review."
         )
 
@@ -243,7 +249,7 @@ def delete_review(
         if deleted_id is None:
             db.rollback()
             raise HTTPException(
-                status_code=404,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail="Review not found or you do not own this review."
             )
 
@@ -256,10 +262,10 @@ def delete_review(
 
     except HTTPException:
         raise
+
     except Exception:
         db.rollback()
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not delete review."
         )
-
