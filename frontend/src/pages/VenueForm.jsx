@@ -29,6 +29,8 @@ const INITIAL_HOURS = Array.from({ length: 7 }, (_, i) => ({
   is_closed: i === 6,
 }));
 
+const VENUE_CITIES = ['Bengaluru', 'Hyderabad', 'Mumbai', 'Delhi NCR', 'Chennai'];
+
 export default function VenueForm() {
   const { id } = useParams();
   const isEdit = Boolean(id);
@@ -334,20 +336,26 @@ export default function VenueForm() {
               <label htmlFor="venue-city" className="block text-xs font-heading uppercase tracking-wider text-ink">
                 City <span className="text-red-700">*</span>
               </label>
-              <input
+              <select
                 id="venue-city"
                 name="city"
-                type="text"
                 required
-                maxLength={80}
                 value={formData.city}
                 onChange={handleInputChange}
-                placeholder="e.g. Bengaluru, Hyderabad, Mumbai"
-                className={`w-full px-4 py-3 bg-sand-dark/30 border rounded-xl text-sm font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all ${
+                className={`w-full px-4 py-3 bg-sand-dark/30 border rounded-xl text-sm font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all ${
                   formErrors.city ? 'border-red-500 ring-1 ring-red-500' : 'border-sand-dark'
                 }`}
                 aria-invalid={Boolean(formErrors.city)}
-              />
+              >
+                <option value="">Select a city</option>
+                {/* keep an older venue's existing city selectable when editing */}
+                {formData.city && !VENUE_CITIES.includes(formData.city) && (
+                  <option value={formData.city}>{formData.city}</option>
+                )}
+                {VENUE_CITIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
               {formErrors.city && (
                 <p className="text-xs text-red-700 font-semibold">{formErrors.city}</p>
               )}
