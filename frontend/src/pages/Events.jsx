@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Calendar,
   Search,
@@ -15,11 +15,12 @@ import {
   Ticket,
   CheckCircle2,
 } from 'lucide-react';
-import { eventsApi, categoriesApi } from '../api';
+import { eventsApi, categoriesApi, bookingsApi } from '../api';
+import PaymentModal from '../components/PaymentModal';
+import { useAuth } from '../context/AuthContext';
 import EventCard from '../components/EventCard';
 import { EventCardSkeleton } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
-import ConfirmModal from '../components/ConfirmModal';
 import { useToast } from '../context/ToastContext';
 import { SEED_EVENTS } from '../data/seedData';
 
@@ -34,6 +35,8 @@ const ITEMS_PER_PAGE = 6;
 export default function Events() {
   const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
+  const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [events, setEvents] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -124,6 +127,11 @@ export default function Events() {
         (e) => String(e.event_id || e.id) === String(selectedEventId)
       );
       if (found) {
+        if (!user) {
+          toast.error('Please log in to book tickets.');
+          navigate('/login');
+          return;
+        }
         setSelectedEventForBooking(found);
       }
     }
@@ -248,21 +256,37 @@ export default function Events() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleConfirmBooking = () => {
+  const closeBookingModal = () => {
+    setSelectedEventForBooking(null);
+    const params = new URLSearchParams(searchParams);
+    params.delete('selected_event');
+    setSearchParams(params);
+  };
+
+  // Payment popup -> create booking, pay with the chosen method, show confirmation
+  const handlePay = async (paymentMethod, quantity) => {
+    const ev = selectedEventForBooking;
+    if (!ev) return;
     setIsBookingSeat(true);
-    setTimeout(() => {
-      setIsBookingSeat(false);
+    try {
+      const booking = await bookingsApi.create({
+        event_id: ev.event_id ?? ev.id,
+        ticket_quantity: quantity,
+      });
+      await bookingsApi.pay({
+        booking_id: booking.booking_id,
+        payment_method: paymentMethod,
+      });
       toast.success(
-        `Registration confirmed for "${selectedEventForBooking.title}"! Ticket ID #TKT-${Math.floor(
-          100000 + Math.random() * 900000
-        )} saved in DBMS.`
+        `Booking confirmed! ${quantity} ticket${quantity > 1 ? 's' : ''} for "${ev.title}" paid via ${paymentMethod}.`
       );
-      setSelectedEventForBooking(null);
-      // Clean query parameter
-      const params = new URLSearchParams(searchParams);
-      params.delete('selected_event');
-      setSearchParams(params);
-    }, 600);
+      closeBookingModal();
+      loadEvents(); // refresh sold / capacity counts
+    } catch (err) {
+      toast.error(err.message || 'Booking failed. Please try again.');
+    } finally {
+      setIsBookingSeat(false);
+    }
   };
 
   return (
@@ -486,25 +510,18 @@ export default function Events() {
         />
       )}
 
-      {/* Booking Confirmation Modal when user selects an event */}
+      {/* Payment popup when user selects an event to book */}
       {selectedEventForBooking && (
-        <ConfirmModal
-          isOpen={Boolean(selectedEventForBooking)}
-          title="Confirm Seat Reservation"
-          message={`Would you like to reserve a ticket for "${selectedEventForBooking.title}" at ${selectedEventForBooking.venue}? Admission: ${
-            (selectedEventForBooking.ticket_price ?? selectedEventForBooking.price) === 0 ? 'Free' : `₹${selectedEventForBooking.ticket_price ?? selectedEventForBooking.price}`
-          }.`}
-          confirmText="Confirm Reservation"
-          cancelText="Cancel"
-          isDanger={false}
-          isLoading={isBookingSeat}
-          onConfirm={handleConfirmBooking}
-          onClose={() => {
-            setSelectedEventForBooking(null);
-            const params = new URLSearchParams(searchParams);
-            params.delete('selected_event');
-            setSearchParams(params);
-          }}
+        <PaymentModal
+          event={selectedEventForBooking}
+          remaining={
+            selectedEventForBooking.capacity != null
+              ? Number(selectedEventForBooking.capacity) - Number(selectedEventForBooking.tickets_sold || 0)
+              : undefined
+          }
+          isProcessing={isBookingSeat}
+          onPay={handlePay}
+          onClose={closeBookingModal}
         />
       )}
     </div>

@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -17,6 +18,40 @@ router = APIRouter(
     prefix="/bookings",
     tags=["Bookings"]
 )
+
+
+# ---------------------------------------------------------
+# STATUS WORDS (read from the database's own CHECK constraints so the
+# code always matches whatever spelling/case the live tables allow)
+# ---------------------------------------------------------
+
+_TABLE_OF = {"bookings_status_check": ("bookings", "status"),
+             "payments_status_check": ("payments", "payment_status")}
+
+
+def _allowed_status(db, constraint_name, synonyms, default):
+    """Pick a status word accepted by EVERY check constraint on that column."""
+    table, column = _TABLE_OF[constraint_name]
+    try:
+        defs = db.execute(
+            text("""
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = CAST(:t AS regclass) AND contype = 'c'
+            """),
+            {"t": table},
+        ).scalars().all()
+    except Exception:
+        db.rollback()
+        return default
+    sets = [set(re.findall(r"'([^']+)'", d)) for d in defs if column in d]
+    if not sets:
+        return default
+    allowed = set.intersection(*sets)
+    for lit in sorted(allowed):
+        if lit.lower() in synonyms:
+            return lit
+    return default
 
 
 # ---------------------------------------------------------
@@ -80,10 +115,10 @@ def create_booking(
         # 3. Check event status
         # -------------------------------------------------
 
-        if event["status"] != "ACTIVE":
+        if event["status"] != "published":
             raise HTTPException(
                 status_code=400,
-                detail="This event is cancelled and cannot be booked"
+                detail="This event is not open for booking"
             )
 
 
@@ -95,7 +130,7 @@ def create_booking(
             SELECT COALESCE(SUM(ticket_quantity), 0)
             FROM bookings
             WHERE event_id = :event_id
-            AND status IN ('PENDING', 'CONFIRMED')
+            AND LOWER(status) IN ('pending', 'confirmed')
         """)
 
         booked_tickets = db.execute(
@@ -149,7 +184,7 @@ def create_booking(
                 CURRENT_DATE,
                 :ticket_quantity,
                 :total_amount,
-                'PENDING'
+                :b_status
             )
             RETURNING booking_id
         """)
@@ -160,7 +195,8 @@ def create_booking(
                 "user_id": user_id,
                 "event_id": booking.event_id,
                 "ticket_quantity": booking.ticket_quantity,
-                "total_amount": total_amount
+                "total_amount": total_amount,
+                "b_status": _allowed_status(db, "bookings_status_check", ("pending",), "pending"),
             }
         ).scalar_one()
 
@@ -181,7 +217,7 @@ def create_booking(
                 :booking_id,
                 :amount,
                 :payment_method,
-                'PENDING',
+                :p_status,
                 CURRENT_TIMESTAMP
             )
             RETURNING payment_id
@@ -192,7 +228,8 @@ def create_booking(
             {
                 "booking_id": booking_id,
                 "amount": total_amount,
-                "payment_method": "UPI"
+                "payment_method": "UPI",
+                "p_status": _allowed_status(db, "payments_status_check", ("pending",), "pending"),
             }
         ).scalar_one()
 
@@ -284,7 +321,7 @@ def make_payment(
         # 2. Check booking status
         # -------------------------------------------------
 
-        if booking_data["status"] == "CONFIRMED":
+        if str(booking_data["status"]).lower() == "confirmed":
 
             raise HTTPException(
                 status_code=400,
@@ -292,7 +329,7 @@ def make_payment(
             )
 
 
-        if booking_data["status"] == "CANCELLED":
+        if str(booking_data["status"]).lower() == "cancelled":
 
             raise HTTPException(
                 status_code=400,
@@ -318,11 +355,11 @@ def make_payment(
         ).scalar()
 
 
-        if event_status != "ACTIVE":
+        if event_status != "published":
 
             raise HTTPException(
                 status_code=400,
-                detail="Event has been cancelled"
+                detail="This event is no longer open for booking"
             )
 
 
@@ -334,17 +371,20 @@ def make_payment(
             UPDATE payments
             SET
                 payment_method = :payment_method,
-                payment_status = 'PAID',
+                payment_status = :paid_status,
                 payment_date = CURRENT_TIMESTAMP
                 WHERE booking_id = :booking_id
-                AND payment_status = 'PENDING'
+                AND LOWER(payment_status) = 'pending'
         """)
 
         db.execute(
             update_payment,
             {
                 "booking_id": payment.booking_id,
-                "payment_method": payment.payment_method
+                "payment_method": payment.payment_method,
+                "paid_status": _allowed_status(
+                    db, "payments_status_check",
+                    ("paid", "completed", "complete", "success", "successful"), "paid"),
             }
         )
 
@@ -355,7 +395,7 @@ def make_payment(
 
         update_booking = text("""
             UPDATE bookings
-            SET status = 'CONFIRMED'
+            SET status = :c_status
             WHERE booking_id = :booking_id
             AND user_id = :user_id
         """)
@@ -364,7 +404,8 @@ def make_payment(
             update_booking,
             {
                 "booking_id": payment.booking_id,
-                "user_id": user_id
+                "user_id": user_id,
+                "c_status": _allowed_status(db, "bookings_status_check", ("confirmed",), "confirmed"),
             }
         )
 
