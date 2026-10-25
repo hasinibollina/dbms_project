@@ -81,6 +81,8 @@ export default function ManageEvents() {
   const [categories, setCategories] = useState([]);
   const [venues, setVenues] = useState([]);
   const [vendors, setVendors] = useState([]);
+  // { [event_id]: [{vendor_name, service_name, agreed_cost}] } shown in the table
+  const [eventVendorMap, setEventVendorMap] = useState({});
   const [services, setServices] = useState([]);
   // Vendor choice per service in the form: { [service_id]: { vendor_id, agreed_cost } }
   const [vendorChoices, setVendorChoices] = useState({});
@@ -119,7 +121,17 @@ export default function ManageEvents() {
         vendorsApi.getAll().catch(() => []),
         servicesApi.getAll().catch(() => []),
       ]);
-      setEvents(Array.isArray(mine) ? mine : []);
+      const mineList = Array.isArray(mine) ? mine : [];
+      setEvents(mineList);
+      // Vendors booked for each of the user's events
+      const vendorLists = await Promise.all(
+        mineList.map((e) => eventsApi.getVendors(e.event_id).catch(() => []))
+      );
+      const vmap = {};
+      mineList.forEach((e, i) => {
+        vmap[e.event_id] = Array.isArray(vendorLists[i]) ? vendorLists[i] : [];
+      });
+      setEventVendorMap(vmap);
       setCategories(Array.isArray(categoryRows) ? categoryRows : []);
       setVenues(Array.isArray(venueRows) ? venueRows.filter((v) => v.is_active !== false) : []);
       setVendors(Array.isArray(vendorRows) ? vendorRows : []);
@@ -416,6 +428,7 @@ export default function ManageEvents() {
               <tr className="bg-sand-dark/60 text-wine border-b border-sand-dark font-heading uppercase tracking-wider text-[11px]">
                 <th className="p-4">Event Details</th>
                 <th className="p-4">Venue & City</th>
+                <th className="p-4">Vendors</th>
                 <th className="p-4">Date & Time</th>
                 <th className="p-4">Ticket Price</th>
                 <th className="p-4">Sold / Capacity</th>
@@ -426,7 +439,7 @@ export default function ManageEvents() {
             <tbody className="divide-y divide-sand-dark/60 font-medium">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="p-10 text-center text-ink/60">
+                  <td colSpan={8} className="p-10 text-center text-ink/60">
                     Loading your events…
                   </td>
                 </tr>
@@ -452,6 +465,29 @@ export default function ManageEvents() {
                       <td className="p-4 text-ink/80 whitespace-nowrap">
                         <div className="font-semibold text-ink">{ev.venue}</div>
                         <div className="text-[10px] text-wine font-medium">{ev.city}</div>
+                      </td>
+
+                      {/* Vendors */}
+                      <td className="p-4 align-top">
+                        {(eventVendorMap[ev.event_id] || []).length === 0 ? (
+                          <span className="text-[11px] text-ink/40">No vendors</span>
+                        ) : (
+                          <div className="flex flex-col gap-1 max-w-[220px]">
+                            {eventVendorMap[ev.event_id].map((v) => (
+                              <div
+                                key={`${v.service_id}-${v.vendor_id}`}
+                                className="text-[11px] leading-tight bg-sand-dark/40 border border-wine/10 rounded-md px-2 py-1"
+                                title={`${v.service_name}: ${v.vendor_name} (₹${Number(v.agreed_cost || 0).toLocaleString('en-IN')})`}
+                              >
+                                <span className="font-semibold text-ink">{v.vendor_name}</span>
+                                <span className="text-wine"> · {v.service_name}</span>
+                                {Number(v.agreed_cost) > 0 && (
+                                  <span className="text-ink/60"> · ₹{Number(v.agreed_cost).toLocaleString('en-IN')}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </td>
 
                       {/* Start Time & End Time */}
@@ -525,7 +561,7 @@ export default function ManageEvents() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} className="p-10 text-center text-ink/60">
+                  <td colSpan={8} className="p-10 text-center text-ink/60">
                     {events.length === 0
                       ? <>You haven't created any events yet. Click <strong>"Create Event"</strong> to add one.</>
                       : 'No events match this filter.'}
