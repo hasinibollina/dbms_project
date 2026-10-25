@@ -54,6 +54,19 @@ async function request(endpoint, options = {}) {
       }
     }
 
+    // Expired or invalid login token: clear the saved login and send the user to sign in again.
+    // (Supabase access tokens last about 1 hour.) Skip this for the login request itself.
+    if (response.status === 401 && token && !endpoint.startsWith('/api/auth/')) {
+      try {
+        localStorage.removeItem('eventilion_user');
+      } catch {
+        /* storage unavailable */
+      }
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login?expired=1');
+      }
+    }
+
     if (!response.ok) {
       // FastAPI sends detail as a string, or as a list of {loc, msg} for validation errors
       let errorMessage = data?.detail ?? data?.message;
@@ -184,6 +197,18 @@ export const eventsApi = {
   }),
 
   delete: (id) => request(`/api/events/${id}`, {
+    method: 'DELETE',
+  }),
+
+  // Vendors linked to an event (table: event_vendors; one vendor per service per event)
+  getVendors: (eventId) => request(`/api/events/${eventId}/vendors`),
+
+  addVendor: (eventId, { vendor_id, agreed_cost = 0 }) => request(`/api/events/${eventId}/vendors`, {
+    method: 'POST',
+    body: { vendor_id, agreed_cost },
+  }),
+
+  removeVendor: (eventId, vendorId) => request(`/api/events/${eventId}/vendors/${vendorId}`, {
     method: 'DELETE',
   }),
 };

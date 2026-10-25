@@ -16,7 +16,10 @@ export default function Login() {
     password: '',
   });
   const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
+  const sessionExpired = new URLSearchParams(location.search).get('expired') === '1';
+  const [errorMessage, setErrorMessage] = useState(
+    sessionExpired ? 'Your session expired. Please sign in again.' : ''
+  );
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
