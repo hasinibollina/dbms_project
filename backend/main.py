@@ -63,6 +63,14 @@ VENDOR_COLUMNS = """
 
 
 # --------------------------------------------------------------------------
+# Category Pydantic Models
+# --------------------------------------------------------------------------
+class CategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: Optional[str] = Field(default=None, max_length=255)
+
+
+# --------------------------------------------------------------------------
 # Venue Pydantic Models
 # --------------------------------------------------------------------------
 
@@ -120,7 +128,9 @@ def is_db_connected():
 # --------------------------------------------------------------------------
 def _db_error(context: str, exc: Exception):
     logger.error(f"{context}: {exc}")
-    raise HTTPException(status_code=503, detail=f"{context}. Check the backend terminal for details.")
+    orig = getattr(exc, "orig", exc)
+    raise HTTPException(status_code=400, detail=f"{context}: {orig}")
+
 
 
 @app.get("/api/admin/stats")
@@ -280,6 +290,104 @@ def list_categories():
             return [dict(r) for r in rows]
     except Exception as e:
         _db_error("Could not load categories", e)
+
+
+@app.post("/api/categories", status_code=status.HTTP_201_CREATED)
+def create_category(category_data: CategoryCreate):
+    name = category_data.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Category name cannot be empty.")
+    try:
+        with engine.begin() as conn:
+            existing = conn.execute(
+                text("SELECT category_id FROM categories WHERE LOWER(name) = LOWER(:name)"),
+                {"name": name}
+            ).scalar()
+            if existing:
+                raise HTTPException(status_code=409, detail=f"Category '{name}' already exists.")
+
+            new_cat = conn.execute(
+                text("""
+                    INSERT INTO categories (name, description)
+                    VALUES (:name, :description)
+                    RETURNING category_id, name, description
+                """),
+                {
+                    "name": name,
+                    "description": category_data.description.strip() if category_data.description else None
+                }
+            ).mappings().one()
+            return dict(new_cat)
+    except HTTPException:
+        raise
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="Category name already exists or invalid data.")
+    except Exception as e:
+        _db_error("Could not create category", e)
+
+
+@app.post("/api/categories/seed")
+def seed_categories():
+    """Populates standard sample categories if the table is empty or missing them."""
+    sample_categories = [
+        ("Technology & AI", "Conferences, hackathons, and tech workshops"),
+        ("Music & Concerts", "Live music performances, bands, and DJ nights"),
+        ("Business & Networking", "Investor summits, trade fairs, and entrepreneur meetups"),
+        ("Arts & Theatre", "Exhibitions, drama, and creative showcases"),
+        ("Workshops & Learning", "Hands-on skill building bootcamps"),
+    ]
+    try:
+        with engine.begin() as conn:
+            for name, desc in sample_categories:
+                existing = conn.execute(
+                    text("SELECT category_id FROM categories WHERE LOWER(name) = LOWER(:name)"),
+                    {"name": name}
+                ).scalar()
+                if not existing:
+                    conn.execute(
+                        text("""
+                            INSERT INTO categories (name, description)
+                            VALUES (:name, :description)
+                        """),
+                        {"name": name, "description": desc}
+                    )
+            rows = conn.execute(text(
+                "SELECT category_id, name, description FROM categories ORDER BY name;"
+            )).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        _db_error("Could not seed categories", e)
+
+
+@app.delete("/api/categories/{category_id}")
+def delete_category(category_id: int):
+    try:
+        with engine.begin() as conn:
+            used = conn.execute(
+                text("SELECT 1 FROM events WHERE category_id = :cat_id LIMIT 1"),
+                {"cat_id": category_id}
+            ).scalar()
+            if used:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot delete category because events are currently assigned to it."
+                )
+
+            deleted = conn.execute(
+                text("DELETE FROM categories WHERE category_id = :cat_id RETURNING category_id"),
+                {"cat_id": category_id}
+            ).scalar_one_or_none()
+
+            if deleted is None:
+                raise HTTPException(status_code=404, detail="Category not found.")
+
+            return {"message": "Category deleted successfully", "category_id": category_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not delete category", e)
+
+
 
 
 @app.get("/api/venue-hours")
@@ -936,3 +1044,606 @@ def update_operating_hours(
             status_code=500,
             detail="Could not update operating hours."
         )
+        
+# --------------------------------------------------------------------------
+# MANAGE EVENTS CRUD - Supabase database
+# --------------------------------------------------------------------------
+
+from datetime import datetime, time
+from pydantic import BaseModel, Field
+
+
+class EventCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=150)
+    category_id: int = Field(gt=0)
+    venue_id: int = Field(gt=0)
+    start_time: datetime
+    end_time: datetime
+    ticket_price: float = Field(ge=0)
+    capacity: int = Field(gt=0)
+    description: Optional[str] = None
+    organizer_id: Optional[Any] = None
+    vendor_ids: Optional[List[int]] = None
+
+
+class EventUpdate(EventCreate):
+    pass
+
+
+class EventVendorAssign(BaseModel):
+    vendor_id: int = Field(gt=0)
+    agreed_cost: Optional[float] = Field(default=0.0, ge=0)
+    booking_status: Optional[str] = Field(default="requested")
+
+
+class EventVendorUpdate(BaseModel):
+    agreed_cost: Optional[float] = Field(default=None, ge=0)
+    booking_status: Optional[str] = None
+
+
+def _event_columns(conn):
+    """Read the actual events columns so optional fields aren't assumed."""
+    return {
+        row[0]
+        for row in conn.execute(text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'events'
+        """)).all()
+    }
+
+
+def _validate_event(conn, event_data, exclude_event_id=None):
+    start = event_data.start_time
+    end = event_data.end_time
+
+    if end <= start:
+        raise HTTPException(
+            status_code=400,
+            detail="End time must be later than start time."
+        )
+
+    # Confirm that the selected venue exists and is active.
+    venue = conn.execute(text("""
+        SELECT venue_id, name, is_active
+        FROM venues
+        WHERE venue_id = :venue_id
+    """), {"venue_id": event_data.venue_id}).mappings().one_or_none()
+
+    if venue is None:
+        raise HTTPException(status_code=400, detail="Selected venue does not exist.")
+
+    if venue["is_active"] is False:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Venue '{venue['name']}' is currently inactive and unavailable for event creation."
+        )
+
+    # Confirm the category exists in the Categories table.
+    category_exists = conn.execute(text("""
+        SELECT 1 FROM categories WHERE category_id = :category_id
+    """), {"category_id": event_data.category_id}).scalar()
+
+    if not category_exists:
+        raise HTTPException(status_code=400, detail="Selected category does not exist in the database.")
+
+    # Check the venue's operating hours for the event's starting day.
+    # Python weekday: Monday=0, Sunday=6.
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    day_name = day_names[start.weekday()]
+
+    opening = conn.execute(text("""
+        SELECT open_time, close_time, is_closed
+        FROM venueoperatinghours
+        WHERE venue_id = :venue_id AND day_of_week = :day
+    """), {
+        "venue_id": event_data.venue_id,
+        "day": start.weekday()
+    }).mappings().one_or_none()
+
+    # Distinguish missing configuration from explicitly closed venues
+    if opening is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Operating hours have not been configured for this venue on {day_name}."
+        )
+
+    if opening["is_closed"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The venue is closed on {day_name}."
+        )
+
+    if opening["open_time"] is None or opening["close_time"] is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The venue's operating hours for {day_name} are incomplete."
+        )
+
+    # Helper to format times as "9:00 AM"
+    def _fmt_time(t):
+        if hasattr(t, "strftime"):
+            formatted = t.strftime("%I:%M %p")
+            return formatted.lstrip("0") if formatted.startswith("0") else formatted
+        return str(t)
+
+    allowed_hours = f"{_fmt_time(opening['open_time'])} – {_fmt_time(opening['close_time'])}"
+    start_clock = start.time().replace(tzinfo=None)
+    end_clock = end.time().replace(tzinfo=None)
+
+    # Check operating hours on start day
+    if start_clock < opening["open_time"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Event start time ({_fmt_time(start_clock)}) is earlier than venue opening hours on {day_name} ({allowed_hours})."
+        )
+
+    # If event finishes on the same calendar day, ensure it doesn't exceed close time
+    if start.date() == end.date():
+        if end_clock > opening["close_time"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Event end time ({_fmt_time(end_clock)}) is later than venue closing hours on {day_name} ({allowed_hours})."
+            )
+
+    # Prevent overlapping non-cancelled events at the same venue.
+    overlap_sql = """
+        SELECT title, start_time, end_time
+        FROM events
+        WHERE venue_id = :venue_id
+          AND LOWER(status) <> 'cancelled'
+          AND start_time < :end_time
+          AND end_time > :start_time
+    """
+    params = {
+        "venue_id": event_data.venue_id,
+        "start_time": start,
+        "end_time": end
+    }
+
+    if exclude_event_id is not None:
+        overlap_sql += " AND event_id <> :exclude_id"
+        params["exclude_id"] = exclude_event_id
+
+    conflict = conn.execute(
+        text(overlap_sql + " LIMIT 1"),
+        params
+    ).mappings().one_or_none()
+
+    if conflict:
+        c_start = _fmt_time(conflict['start_time'].time()) if hasattr(conflict['start_time'], 'time') else str(conflict['start_time'])
+        c_end = _fmt_time(conflict['end_time'].time()) if hasattr(conflict['end_time'], 'time') else str(conflict['end_time'])
+        raise HTTPException(
+            status_code=409,
+            detail=f"This venue already has an event scheduled during that time: '{conflict['title']}' ({c_start} – {c_end})."
+        )
+
+
+def _event_response(conn, event_id):
+    columns = _event_columns(conn)
+    description_select = (
+        "e.description" if "description" in columns
+        else "NULL AS description"
+    )
+    organizer_select = (
+        "e.organizer_id::text AS organizer_id" if "organizer_id" in columns
+        else "NULL AS organizer_id"
+    )
+
+    row = conn.execute(text(f"""
+        SELECT e.event_id, e.title, e.category_id, e.venue_id,
+               e.start_time, e.end_time, e.ticket_price, e.capacity,
+               e.status, {description_select}, {organizer_select},
+               c.name AS category,
+               v.name AS venue,
+               v.city,
+               COALESCE((
+                   SELECT SUM(b.ticket_quantity)
+                   FROM bookings b
+                   WHERE b.event_id = e.event_id
+                     AND LOWER(b.status) <> 'cancelled'
+               ), 0) AS tickets_sold
+        FROM events e
+        LEFT JOIN categories c ON c.category_id = e.category_id
+        LEFT JOIN venues v ON v.venue_id = e.venue_id
+        WHERE e.event_id = :event_id
+    """), {"event_id": event_id}).mappings().one_or_none()
+
+    if row is None:
+        return None
+
+    result = dict(row)
+    db_status = (result.get("status") or "published").lower()
+    if db_status in ("published", "scheduled"):
+        result["status"] = "Scheduled"
+    elif db_status == "cancelled":
+        result["status"] = "Cancelled"
+    elif db_status == "completed":
+        result["status"] = "Completed"
+    elif db_status == "draft":
+        result["status"] = "Draft"
+    else:
+        result["status"] = db_status.capitalize()
+
+    result["tickets_sold"] = int(result["tickets_sold"] or 0)
+    result["ticket_price"] = float(result["ticket_price"] or 0)
+    result["capacity"] = int(result["capacity"] or 0)
+
+    # Attach assigned vendors from event_vendors
+    vendor_rows = conn.execute(text("""
+        SELECT ev.vendor_id, v.vendor_name, s.service_name,
+               ev.agreed_cost, ev.booking_status, v.phone, v.email
+        FROM event_vendors ev
+        JOIN vendors v ON v.vendor_id = ev.vendor_id
+        JOIN services s ON s.service_id = v.service_id
+        WHERE ev.event_id = :event_id
+        ORDER BY s.service_name, v.vendor_name;
+    """), {"event_id": event_id}).mappings().all()
+
+    result["vendors"] = [
+        {
+            "vendor_id": r["vendor_id"],
+            "vendor_name": r["vendor_name"],
+            "service_name": r["service_name"],
+            "phone": r["phone"],
+            "email": r["email"],
+            "agreed_cost": float(r["agreed_cost"] or 0),
+            "booking_status": r["booking_status"],
+        }
+        for r in vendor_rows
+    ]
+    result["vendors_count"] = len(result["vendors"])
+    return result
+
+
+
+@app.get("/api/events")
+def list_events():
+    try:
+        with engine.connect() as conn:
+            ids = conn.execute(text("""
+                SELECT event_id FROM events ORDER BY start_time DESC
+            """)).scalars().all()
+            return [_event_response(conn, event_id) for event_id in ids]
+    except Exception as e:
+        _db_error("Could not load events", e)
+
+
+@app.post("/api/events", status_code=status.HTTP_201_CREATED)
+def create_event(event_data: EventCreate):
+    try:
+        with engine.begin() as conn:
+            _validate_event(conn, event_data)
+
+            columns = _event_columns(conn)
+            insert_fields = [
+                "title", "category_id", "venue_id", "start_time",
+                "end_time", "ticket_price", "capacity", "status"
+            ]
+            values = [
+                ":title", ":category_id", ":venue_id", ":start_time",
+                ":end_time", ":ticket_price", ":capacity", "'published'"
+            ]
+            params = event_data.model_dump()
+            params["title"] = event_data.title.strip()
+            vendor_ids = params.pop("vendor_ids", None)
+
+            if "description" in columns:
+                insert_fields.append("description")
+                values.append(":description")
+
+            if "organizer_id" in columns:
+                insert_fields.append("organizer_id")
+                values.append(":organizer_id")
+                org_id = None
+                if event_data.organizer_id:
+                    valid = conn.execute(
+                        text("SELECT id FROM auth.users WHERE id::text = :uid"),
+                        {"uid": str(event_data.organizer_id)}
+                    ).scalar()
+                    if valid:
+                        org_id = valid
+
+                if not org_id:
+                    org_id = conn.execute(
+                        text("SELECT id FROM auth.users ORDER BY created_at ASC LIMIT 1")
+                    ).scalar()
+
+                if not org_id:
+                    import uuid
+                    new_uid = str(uuid.uuid4())
+                    conn.execute(text("""
+                        INSERT INTO auth.users (id, email, created_at, updated_at, aud, role)
+                        VALUES (:id, 'admin@eventhub.com', NOW(), NOW(), 'authenticated', 'authenticated')
+                    """), {"id": new_uid})
+                    org_id = new_uid
+
+                params["organizer_id"] = str(org_id)
+
+            new_id = conn.execute(text(f"""
+                INSERT INTO events ({", ".join(insert_fields)})
+                VALUES ({", ".join(values)})
+                RETURNING event_id
+            """), params).scalar_one()
+
+            if vendor_ids:
+                for vid in vendor_ids:
+                    v_exists = conn.execute(
+                        text("SELECT 1 FROM vendors WHERE vendor_id = :vid"),
+                        {"vid": vid}
+                    ).scalar()
+                    if v_exists:
+                        conn.execute(text("""
+                            INSERT INTO event_vendors (event_id, vendor_id, agreed_cost, booking_status)
+                            VALUES (:event_id, :vendor_id, 0, 'requested')
+                            ON CONFLICT (event_id, vendor_id) DO NOTHING
+                        """), {"event_id": new_id, "vendor_id": vid})
+
+            return _event_response(conn, new_id)
+
+    except HTTPException:
+        raise
+    except IntegrityError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Database integrity error: {getattr(e, 'orig', e)}"
+        )
+    except Exception as e:
+        _db_error("Could not create event", e)
+
+
+@app.put("/api/events/{event_id}")
+def update_event(event_id: int, event_data: EventUpdate):
+    try:
+        with engine.begin() as conn:
+            exists = conn.execute(text("""
+                SELECT 1 FROM events WHERE event_id = :id
+            """), {"id": event_id}).scalar()
+
+            if not exists:
+                raise HTTPException(status_code=404, detail="Event not found.")
+
+            _validate_event(conn, event_data, exclude_event_id=event_id)
+
+            columns = _event_columns(conn)
+            updates = {
+                "title": event_data.title.strip(),
+                "category_id": event_data.category_id,
+                "venue_id": event_data.venue_id,
+                "start_time": event_data.start_time,
+                "end_time": event_data.end_time,
+                "ticket_price": event_data.ticket_price,
+                "capacity": event_data.capacity,
+            }
+
+            if "description" in columns:
+                updates["description"] = event_data.description
+
+            assignments = ", ".join(f"{key} = :{key}" for key in updates)
+
+            conn.execute(text(f"""
+                UPDATE events
+                SET {assignments}
+                WHERE event_id = :event_id
+            """), {**updates, "event_id": event_id})
+
+            if event_data.vendor_ids is not None:
+                existing_vids = set(conn.execute(text("""
+                    SELECT vendor_id FROM event_vendors WHERE event_id = :event_id
+                """), {"event_id": event_id}).scalars().all())
+
+                new_vids = set(event_data.vendor_ids)
+                to_delete = existing_vids - new_vids
+                to_add = new_vids - existing_vids
+
+                for vid in to_delete:
+                    conn.execute(text("""
+                        DELETE FROM event_vendors
+                        WHERE event_id = :event_id AND vendor_id = :vid
+                    """), {"event_id": event_id, "vid": vid})
+
+                for vid in to_add:
+                    v_exists = conn.execute(
+                        text("SELECT 1 FROM vendors WHERE vendor_id = :vid"),
+                        {"vid": vid}
+                    ).scalar()
+                    if v_exists:
+                        conn.execute(text("""
+                            INSERT INTO event_vendors (event_id, vendor_id, agreed_cost, booking_status)
+                            VALUES (:event_id, :vendor_id, 0, 'requested')
+                            ON CONFLICT (event_id, vendor_id) DO NOTHING
+                        """), {"event_id": event_id, "vendor_id": vid})
+
+            return _event_response(conn, event_id)
+
+    except HTTPException:
+        raise
+    except IntegrityError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid event data: {getattr(e, 'orig', e)}")
+    except Exception as e:
+        _db_error("Could not update event", e)
+
+
+@app.patch("/api/events/{event_id}/cancel")
+def cancel_event(event_id: int):
+    try:
+        with engine.begin() as conn:
+            updated_id = conn.execute(text("""
+                UPDATE events
+                SET status = 'cancelled'
+                WHERE event_id = :id
+                RETURNING event_id
+            """), {"id": event_id}).scalar_one_or_none()
+
+            if updated_id is None:
+                raise HTTPException(status_code=404, detail="Event not found.")
+
+            return _event_response(conn, event_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not cancel event", e)
+
+
+# --------------------------------------------------------------------------
+# Event Vendors Management (/api/events/{event_id}/vendors)
+# --------------------------------------------------------------------------
+
+def _fetch_event_vendors(conn, event_id: int):
+    rows = conn.execute(text("""
+        SELECT ev.event_id, ev.vendor_id, v.vendor_name, v.service_id, s.service_name,
+               v.phone, v.email, v.service_description,
+               ev.agreed_cost, ev.booking_status, ev.created_at
+        FROM event_vendors ev
+        JOIN vendors v ON v.vendor_id = ev.vendor_id
+        JOIN services s ON s.service_id = v.service_id
+        WHERE ev.event_id = :event_id
+        ORDER BY s.service_name, v.vendor_name;
+    """), {"event_id": event_id}).mappings().all()
+
+    return [
+        {
+            **dict(r),
+            "agreed_cost": float(r["agreed_cost"] or 0),
+            "created_at": r["created_at"].isoformat() if hasattr(r["created_at"], "isoformat") else str(r["created_at"])
+        }
+        for r in rows
+    ]
+
+
+@app.get("/api/events/{event_id}/vendors")
+def list_event_vendors(event_id: int):
+    """List all vendors associated with an event in event_vendors."""
+    try:
+        with engine.connect() as conn:
+            exists = conn.execute(text("SELECT 1 FROM events WHERE event_id = :id"), {"id": event_id}).scalar()
+            if not exists:
+                raise HTTPException(status_code=404, detail="Event not found.")
+            return _fetch_event_vendors(conn, event_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not fetch event vendors", e)
+
+
+@app.post("/api/events/{event_id}/vendors", status_code=status.HTTP_201_CREATED)
+def assign_vendor_to_event(event_id: int, payload: EventVendorAssign):
+    """Assign a vendor to an event in event_vendors table."""
+    status_val = (payload.booking_status or "requested").lower()
+    if status_val not in ("requested", "confirmed", "cancelled"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid booking status. Allowed values: 'requested', 'confirmed', 'cancelled'."
+        )
+
+    try:
+        with engine.begin() as conn:
+            event_exists = conn.execute(text("SELECT 1 FROM events WHERE event_id = :id"), {"id": event_id}).scalar()
+            if not event_exists:
+                raise HTTPException(status_code=404, detail="Event not found.")
+
+            vendor = conn.execute(
+                text("SELECT vendor_name FROM vendors WHERE vendor_id = :vid"),
+                {"vid": payload.vendor_id}
+            ).scalar()
+            if not vendor:
+                raise HTTPException(status_code=404, detail="Vendor not found.")
+
+            conn.execute(text("""
+                INSERT INTO event_vendors (event_id, vendor_id, agreed_cost, booking_status)
+                VALUES (:event_id, :vendor_id, :agreed_cost, :booking_status)
+                ON CONFLICT (event_id, vendor_id)
+                DO UPDATE SET agreed_cost = EXCLUDED.agreed_cost, booking_status = EXCLUDED.booking_status
+            """), {
+                "event_id": event_id,
+                "vendor_id": payload.vendor_id,
+                "agreed_cost": payload.agreed_cost or 0.0,
+                "booking_status": status_val
+            })
+
+            vendors = _fetch_event_vendors(conn, event_id)
+            match = next((v for v in vendors if v["vendor_id"] == payload.vendor_id), None)
+            return {
+                "message": f"Vendor '{vendor}' assigned to event successfully.",
+                "vendor": match
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not assign vendor to event", e)
+
+
+@app.patch("/api/events/{event_id}/vendors/{vendor_id}")
+def update_event_vendor(event_id: int, vendor_id: int, payload: EventVendorUpdate):
+    """Update agreed cost or booking status of an assigned vendor."""
+    updates = {}
+    if payload.booking_status is not None:
+        status_val = payload.booking_status.lower()
+        if status_val not in ("requested", "confirmed", "cancelled"):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid booking status. Allowed values: 'requested', 'confirmed', 'cancelled'."
+            )
+        updates["booking_status"] = status_val
+
+    if payload.agreed_cost is not None:
+        if payload.agreed_cost < 0:
+            raise HTTPException(status_code=400, detail="Agreed cost cannot be negative.")
+        updates["agreed_cost"] = payload.agreed_cost
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided to update.")
+
+    try:
+        with engine.begin() as conn:
+            exists = conn.execute(text("""
+                SELECT 1 FROM event_vendors WHERE event_id = :eid AND vendor_id = :vid
+            """), {"eid": event_id, "vid": vendor_id}).scalar()
+            if not exists:
+                raise HTTPException(status_code=404, detail="Vendor assignment not found for this event.")
+
+            set_clauses = [f"{k} = :{k}" for k in updates.keys()]
+            conn.execute(text(f"""
+                UPDATE event_vendors
+                SET {", ".join(set_clauses)}
+                WHERE event_id = :eid AND vendor_id = :vid
+            """), {**updates, "eid": event_id, "vid": vendor_id})
+
+            vendors = _fetch_event_vendors(conn, event_id)
+            match = next((v for v in vendors if v["vendor_id"] == vendor_id), None)
+            return {
+                "message": "Vendor assignment updated successfully.",
+                "vendor": match
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not update vendor assignment", e)
+
+
+@app.delete("/api/events/{event_id}/vendors/{vendor_id}")
+def remove_vendor_from_event(event_id: int, vendor_id: int):
+    """Unassign / remove a vendor from an event."""
+    try:
+        with engine.begin() as conn:
+            deleted = conn.execute(text("""
+                DELETE FROM event_vendors
+                WHERE event_id = :eid AND vendor_id = :vid
+                RETURNING vendor_id
+            """), {"eid": event_id, "vid": vendor_id}).scalar()
+
+            if not deleted:
+                raise HTTPException(status_code=404, detail="Vendor is not assigned to this event.")
+
+            return {
+                "message": "Vendor unassigned from event successfully.",
+                "event_id": event_id,
+                "vendor_id": vendor_id
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        _db_error("Could not remove vendor from event", e)
+

@@ -94,6 +94,8 @@ export const venuesApi = {
 
   delete: (id) => request(`/api/venues/${id}`, { method: 'DELETE' }),
 
+  getHours: (venueId) => request(venueId ? `/api/venue-hours?venue_id=${venueId}` : '/api/venue-hours'),
+
   // Saves a 7-day schedule: updates days that already have a row, inserts the rest.
   updateHours: async (id, hoursArray) => {
     const existing = await request(`/api/venue-hours?venue_id=${id}`);
@@ -119,6 +121,16 @@ export const venuesApi = {
 // Categories API (table: categories)
 export const categoriesApi = {
   getAll: () => request('/api/categories'),
+  create: (data) => request('/api/categories', {
+    method: 'POST',
+    body: data,
+  }),
+  seed: () => request('/api/categories/seed', {
+    method: 'POST',
+  }),
+  delete: (id) => request(`/api/categories/${id}`, {
+    method: 'DELETE',
+  }),
 };
 
 // Services API (table: services, referenced by vendors.service_id)
@@ -202,6 +214,22 @@ export const vendorsApi = {
   }),
 };
 
+// Event Vendors API (table: event_vendors)
+export const eventVendorsApi = {
+  getByEvent: (eventId) => request(`/api/events/${eventId}/vendors`),
+  assign: (eventId, payload) => request(`/api/events/${eventId}/vendors`, {
+    method: 'POST',
+    body: payload,
+  }),
+  update: (eventId, vendorId, payload) => request(`/api/events/${eventId}/vendors/${vendorId}`, {
+    method: 'PATCH',
+    body: payload,
+  }),
+  remove: (eventId, vendorId) => request(`/api/events/${eventId}/vendors/${vendorId}`, {
+    method: 'DELETE',
+  }),
+};
+
 export default {
   API_BASE_URL,
   venues: venuesApi,
@@ -211,4 +239,5 @@ export default {
   events: eventsApi,
   admin: adminApi,
   vendors: vendorsApi,
+  eventVendors: eventVendorsApi,
 };
