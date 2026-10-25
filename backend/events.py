@@ -51,7 +51,7 @@ class EventCreate(BaseModel):
     end_time: datetime
     ticket_price: Decimal = Field(ge=0)
     capacity: int = Field(gt=0)
-    status: str = "upcoming"
+    status: str = "published"
 
 
 class EventUpdate(BaseModel):
@@ -72,6 +72,38 @@ class EventVendorCreate(BaseModel):
 
 
 
+# Allowed values of the events.status CHECK constraint in the database
+EVENT_STATUSES = {"draft", "published", "cancelled", "completed"}
+
+
+def check_status(value):
+    if value is not None and value not in EVENT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of: {', '.join(sorted(EVENT_STATUSES))}",
+        )
+
+
+# Event rows with category/venue names and ticket totals, used by the list endpoints
+EVENT_LIST_SQL = """
+    SELECT e.event_id, e.title, e.description, e.organizer_id,
+           e.category_id, e.venue_id, e.start_time, e.end_time,
+           e.ticket_price, e.capacity, e.status, e.created_at,
+           COALESCE(c.name, 'Uncategorized') AS category,
+           COALESCE(v.name, 'Unassigned')    AS venue,
+           COALESCE(v.city, 'N/A')           AS city,
+           COALESCE(SUM(b.ticket_quantity) FILTER (WHERE b.status <> 'cancelled'), 0) AS tickets_sold,
+           COALESCE(SUM(b.total_amount)   FILTER (WHERE b.status <> 'cancelled'), 0) AS revenue
+    FROM events e
+    LEFT JOIN categories c ON c.category_id = e.category_id
+    LEFT JOIN venues     v ON v.venue_id    = e.venue_id
+    LEFT JOIN bookings   b ON b.event_id    = e.event_id
+    {where}
+    GROUP BY e.event_id, c.name, v.name, v.city
+    ORDER BY e.start_time
+"""
+
+
 EVENT_COLUMNS = """
     event_id, title, description, organizer_id, category_id, venue_id,
     start_time, end_time, ticket_price, capacity, status, created_at
@@ -80,16 +112,30 @@ EVENT_COLUMNS = """
 
 @router.get("")
 def list_events():
-    """List events."""
+    """Public list of all events with category, venue and city names."""
     try:
         with engine.connect() as conn:
-            rows = conn.execute(
-                text(f"SELECT {EVENT_COLUMNS} FROM events ORDER BY start_time")
-            ).mappings().all()
+            rows = conn.execute(text(EVENT_LIST_SQL.format(where=""))).mappings().all()
             return [dict(row) for row in rows]
     except Exception:
         logger.exception("Could not list events")
         raise HTTPException(status_code=503, detail="Could not load events")
+
+
+@router.get("/mine")
+def list_my_events(user=Depends(require_event_manager)):
+    """Events created by the logged-in user (organizer_id = their Supabase user id).
+    Must stay above /{event_id} so "mine" is not read as an event id."""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(EVENT_LIST_SQL.format(where="WHERE e.organizer_id = :organizer_id")),
+                {"organizer_id": str(user.id)},
+            ).mappings().all()
+            return [dict(row) for row in rows]
+    except Exception:
+        logger.exception("Could not list user's events")
+        raise HTTPException(status_code=503, detail="Could not load your events")
 
 
 @router.get("/{event_id}")
@@ -114,6 +160,7 @@ def create_event(event: EventCreate, user=Depends(require_event_manager)):
     """Create an event; organizer_id always comes from the verified token."""
     role = get_user_role(user)
     values = event.model_dump()
+    check_status(values["status"])
     if values["end_time"] <= values["start_time"]:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
@@ -147,6 +194,7 @@ def update_event(event_id: int, changes: EventUpdate, user=Depends(require_event
     updates = changes.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided")
+    check_status(updates.get("status"))
     if "start_time" in updates and updates["start_time"] is None:
         raise HTTPException(status_code=400, detail="start_time cannot be null")
     if "end_time" in updates and updates["end_time"] is None:
