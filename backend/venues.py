@@ -320,48 +320,77 @@ def update_venue(
 # DELETE: Remove a venue
 # ============================================================
 
+
 @router.delete("/{venue_id}")
 def delete_venue(
     venue_id: int,
     current_admin=Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-
     try:
+        # Check whether the venue exists.
+        venue = db.execute(
+            text("""
+                SELECT venue_id
+                FROM venues
+                WHERE venue_id = :venue_id
+            """),
+            {"venue_id": venue_id}
+        ).scalar_one_or_none()
 
-        result = db.execute(text("""
-            DELETE FROM venues
-            WHERE venue_id = :venue_id
-            RETURNING venue_id
-        """), {
-            "venue_id": venue_id
-        })
-
-        deleted = result.scalar_one_or_none()
-
-        if deleted is None:
-
-            db.rollback()
-
+        if venue is None:
             raise HTTPException(
                 status_code=404,
                 detail="Venue not found."
             )
 
+        # Delete events connected to this venue.
+        db.execute(
+            text("""
+                DELETE FROM events
+                WHERE venue_id = :venue_id
+            """),
+            {"venue_id": venue_id}
+        )
+
+        # Delete the venue after deleting its events.
+        db.execute(
+            text("""
+                DELETE FROM venues
+                WHERE venue_id = :venue_id
+            """),
+            {"venue_id": venue_id}
+        )
+
+        # Commit both operations together.
         db.commit()
 
         return {
-            "message": "Venue deleted successfully"
+            "message": "Venue and associated events deleted successfully",
+            "venue_id": venue_id
         }
 
-    except IntegrityError:
-
+    except HTTPException:
         db.rollback()
+        raise
 
+    except IntegrityError:
+        db.rollback()
         raise HTTPException(
-            status_code=400,
-            detail="Venue could not be deleted."
+            status_code=409,
+            detail=(
+                "The venue or its events are still referenced by other "
+                "records. Related records must be handled before deletion."
+            )
         )
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to delete venue and its associated events."
+        )
+
 
 
 # ============================================================
