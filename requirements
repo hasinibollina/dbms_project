@@ -3,3 +3,6 @@ uvicorn
 sqlalchemy
 pg8000
 python-dotenv
+supabase
+gotrue
+email-validator

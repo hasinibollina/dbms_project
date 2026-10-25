@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { Menu, X, LogOut, LogIn } from 'lucide-react';
+import { Menu, X, LogOut, LogIn, UserPlus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -127,6 +127,19 @@ export default function Navbar() {
                   <LogIn className="w-3.5 h-3.5" />
                   <span>Login</span>
                 </NavLink>
+                <NavLink
+                  to="/register"
+                  className={({ isActive }) =>
+                    `inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-heading uppercase tracking-wider font-bold transition-all border ${
+                      isActive
+                        ? 'bg-sand/20 text-sand border-sand'
+                        : 'border-sand/40 text-sand hover:bg-sand hover:text-wine'
+                    }`
+                  }
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Sign Up</span>
+                </NavLink>
               </div>
             )}
           </div>
@@ -190,14 +203,24 @@ export default function Navbar() {
                 </button>
               </div>
             ) : (
-              <NavLink
-                to="/login"
-                onClick={() => setMobileMenuOpen(false)}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-heading text-xs uppercase tracking-wider font-bold bg-sand text-wine hover:bg-sand-dark transition-colors shadow-sm"
-              >
-                <LogIn className="w-4 h-4" />
-                Login
-              </NavLink>
+              <div className="flex items-center gap-2">
+                <NavLink
+                  to="/login"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-heading text-xs uppercase tracking-wider font-bold bg-sand text-wine hover:bg-sand-dark transition-colors shadow-sm"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>Login</span>
+                </NavLink>
+                <NavLink
+                  to="/register"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-heading text-xs uppercase tracking-wider font-bold text-sand border border-sand/40 hover:bg-sand hover:text-wine transition-colors"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>Sign Up</span>
+                </NavLink>
+              </div>
             )}
           </div>
         </div>

@@ -58,23 +58,36 @@ export default function ManageVendors() {
   const [deleting, setDeleting] = useState(false);
 
   const loadVendors = async () => {
-    setLoading(true);
-    setLoadError('');
-    try {
-      const [vendorRows, serviceRows] = await Promise.all([
-        vendorsApi.getAll(),
-        servicesApi.getAll(),
-      ]);
-      setVendors(Array.isArray(vendorRows) ? vendorRows : []);
-      setServices(Array.isArray(serviceRows) ? serviceRows : []);
-    } catch (err) {
-      setVendors([]);
-      setLoadError(err.message || 'Could not load vendors.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  setLoading(true);
+  setLoadError('');
 
+  try {
+    const vendorRows = await vendorsApi.getAll();
+
+const normalizedVendors = (Array.isArray(vendorRows) ? vendorRows : []).map((v) => ({
+  ...v,
+  vendor_name: v.vendor_name || v.name || '',
+  service_name: v.service_name || v.service_type || '',
+  service_description: v.service_description || '',
+  email: v.email || '',
+  created_at: v.created_at || null,
+}));
+
+setVendors(normalizedVendors);
+    try {
+      const serviceRows = await servicesApi.getAll();
+      setServices(Array.isArray(serviceRows) ? serviceRows : []);
+    } catch (serviceError) {
+      console.warn('Could not load services:', serviceError);
+      setServices([]);
+    }
+  } catch (err) {
+    setVendors([]);
+    setLoadError(err.message || 'Could not load vendors.');
+  } finally {
+    setLoading(false);
+  }
+};
   useEffect(() => {
     loadVendors();
   }, []);

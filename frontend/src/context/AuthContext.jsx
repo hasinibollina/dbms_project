@@ -42,7 +42,7 @@ export function AuthProvider({ children }) {
         name: userData?.name || userData?.full_name || userData?.email?.split('@')[0],
         email: userData?.email,
         role,
-        token: userData?.token || 'session-token',
+        token: userData?.token,
       };
       setUser(cleanUser);
       localStorage.setItem('eventilion_user', JSON.stringify(cleanUser));

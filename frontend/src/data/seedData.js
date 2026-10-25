@@ -16,64 +16,9 @@ export function formatINR(val) {
 }
 
 // --------------------------------------------------------------------------
-// 1. Users / Accounts (Users table)
-// Columns: user_id, full_name, email, password_hash, phone, role
-// CHECK: role IN ('Attendee', 'Organizer', 'Admin')
+// 1. Users (Supabase Auth & Profiles - No local demo accounts)
 // --------------------------------------------------------------------------
-export const DEMO_ACCOUNTS = [
-  {
-    user_id: 1,
-    full_name: 'Sneha Admin',
-    name: 'Sneha Admin', // display alias
-    email: 'admin@eventhub.com',
-    phone: '+91 9876543210',
-    role: 'Admin',
-    password: 'admin123',
-    token: 'demo-token-admin',
-  },
-  {
-    user_id: 2,
-    full_name: 'Arjun Mehta',
-    name: 'Arjun Mehta', // display alias
-    email: 'arjun.organizer@gmail.com',
-    phone: '+91 9811122233',
-    role: 'Organizer',
-    password: 'org123',
-    token: 'demo-token-organizer',
-  },
-  {
-    user_id: 3,
-    full_name: 'Priya Sharma',
-    name: 'Priya Sharma',
-    email: 'priya.events@gmail.com',
-    phone: '+91 9822233344',
-    role: 'Organizer',
-    password: 'org123',
-    token: 'demo-token-priya',
-  },
-  {
-    // Legacy alias support for admin@eventilion.in
-    user_id: 1,
-    full_name: 'Sneha Admin',
-    name: 'Sneha Admin',
-    email: 'admin@eventilion.in',
-    phone: '+91 9876543210',
-    role: 'Admin',
-    password: 'admin123',
-    token: 'demo-token-admin',
-  },
-  {
-    // Legacy alias support for organizer@eventilion.in
-    user_id: 2,
-    full_name: 'Arjun Mehta',
-    name: 'Arjun Mehta',
-    email: 'organizer@eventilion.in',
-    phone: '+91 9811122233',
-    role: 'Organizer',
-    password: 'org123',
-    token: 'demo-token-organizer',
-  },
-];
+
 
 // --------------------------------------------------------------------------
 // 2. Categories (Categories table)
@@ -492,7 +437,7 @@ export const SEED_EVENTS = [
     capacity: 800,
     status: 'Scheduled',
     organizer: 'Sneha Admin',
-    organizer_email: 'admin@eventhub.com',
+    organizer_email: 'admin@example.com',
     venue: 'Symphony Amphitheatre',
     city: 'Hyderabad',
     category: 'Music & Concerts',
@@ -558,7 +503,7 @@ export const SEED_EVENTS = [
     capacity: 250,
     status: 'Scheduled',
     organizer: 'Sneha Admin',
-    organizer_email: 'admin@eventhub.com',
+    organizer_email: 'admin@example.com',
     venue: 'Innovate Cowork & Hall',
     city: 'Mumbai',
     category: 'Workshops & Learning',
@@ -624,7 +569,7 @@ export const SEED_EVENTS = [
     capacity: 2500,
     status: 'Completed',
     organizer: 'Sneha Admin',
-    organizer_email: 'admin@eventhub.com',
+    organizer_email: 'admin@example.com',
     venue: 'Grand Heritage Palace Grounds',
     city: 'Bengaluru',
     category: 'Arts & Theatre',
@@ -690,7 +635,7 @@ export const SEED_EVENTS = [
     capacity: 250,
     status: 'Scheduled',
     organizer: 'Sneha Admin',
-    organizer_email: 'admin@eventhub.com',
+    organizer_email: 'admin@example.com',
     venue: 'Innovate Cowork & Hall',
     city: 'Mumbai',
     category: 'Business & Networking',
@@ -734,7 +679,7 @@ export const SEED_EVENTS = [
     capacity: 250,
     status: 'Completed',
     organizer: 'Sneha Admin',
-    organizer_email: 'admin@eventhub.com',
+    organizer_email: 'admin@example.com',
     venue: 'Innovate Cowork & Hall',
     city: 'Mumbai',
     category: 'Workshops & Learning',

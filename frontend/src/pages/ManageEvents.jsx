@@ -17,16 +17,63 @@ import {
   Ban,
   ArrowUpDown,
   RefreshCw,
-  Store,
-  Briefcase,
-  Phone,
-  Mail,
-  Check,
+  Tag,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
+import { eventsApi, categoriesApi, venuesApi } from '../api';
 import { DAYS_OF_WEEK, formatTime } from '../utils/hoursUtils';
+
+// Values allowed by the events.status CHECK constraint in the database
+const STATUS_TABS = [
+  { value: 'All', label: 'All' },
+  { value: 'published', label: 'Published' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+const STATUS_STYLES = {
+  published: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
+  draft: 'bg-amber-100 text-amber-900 border border-amber-300',
+  completed: 'bg-sand-dark text-ink border border-sand-dark',
+  cancelled: 'bg-red-100 text-red-800 border border-red-300',
+};
+
+const EMPTY_FORM = {
+  title: '',
+  category_id: '',
+  venue_id: '',
+  start_time: '',
+  end_time: '',
+  ticket_price: '499',
+  capacity: '500',
+  status: 'published',
+  description: '',
+};
+
+function formatDateTime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+// ISO timestamp -> value for <input type="datetime-local"> in the viewer's local time
+function toInputDateTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 function getDayOfWeekFromDateString(isoStr) {
   if (!isoStr) return null;
@@ -47,35 +94,28 @@ function getTimeFromDateString(isoStr) {
   return `${match[1]}:${match[2]}:00`;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
 export default function ManageEvents() {
   const { user } = useAuth();
   const toast = useToast();
 
   const [events, setEvents] = useState([]);
-  const [venues, setVenues] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [allVendors, setAllVendors] = useState([]);
+  const [venues, setVenues] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
-  // Modal states for Create / Edit
+  // Create / Edit modal
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null); // null = Create, object = Edit
-  const [formData, setFormData] = useState({
-    title: '',
-    category_id: '',
-    venue_id: '',
-    start_time: '',
-    end_time: '',
-    ticket_price: '499',
-    capacity: '500',
-    description: '',
-    vendor_ids: [],
-  });
+  const [formData, setFormData] = useState(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  // Venue Operating Hours state
+  const [venueHours, setVenueHours] = useState([]);
+  const [loadingHours, setLoadingHours] = useState(false);
 
   // Quick Add Category Modal state
   const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -83,54 +123,30 @@ export default function ManageEvents() {
   const [newCategoryDesc, setNewCategoryDesc] = useState('');
   const [categorySubmitting, setCategorySubmitting] = useState(false);
 
-  // Venue Operating Hours state
-  const [venueHours, setVenueHours] = useState([]);
-  const [loadingHours, setLoadingHours] = useState(false);
-
-  // Cancel Event Confirmation Modal state
+  // Cancel confirmation modal
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [eventToCancel, setEventToCancel] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
 
-  // Dedicated Event Vendors Modal state (event_vendors table)
-  const [vendorModalOpen, setVendorModalOpen] = useState(false);
-  const [activeVendorEvent, setActiveVendorEvent] = useState(null);
-  const [eventVendorsList, setEventVendorsList] = useState([]);
-  const [loadingEventVendors, setLoadingEventVendors] = useState(false);
-  const [selectedNewVendorId, setSelectedNewVendorId] = useState('');
-  const [newVendorAgreedCost, setNewVendorAgreedCost] = useState('0');
-  const [newVendorStatus, setNewVendorStatus] = useState('requested');
-  const [vendorActionLoading, setVendorActionLoading] = useState(false);
-  const [vendorCosts, setVendorCosts] = useState({});
+  const isAdmin = user?.role?.toLowerCase() === 'admin';
 
-  // Load events, venues, categories, and vendors from the backend
+  // Only the logged-in user's own events (GET /api/events/mine).
+  // Admins see every event in the Admin Panel instead.
   const loadEvents = async () => {
     setLoading(true);
-
+    setLoadError('');
     try {
-      const [eventsRes, venuesRes, categoriesRes, vendorsRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/events`),
-        fetch(`${API_BASE_URL}/api/venues`),
-        fetch(`${API_BASE_URL}/api/categories`),
-        fetch(`${API_BASE_URL}/api/vendors`),
+      const [mine, categoryRows, venueRows] = await Promise.all([
+        eventsApi.getMine(),
+        categoriesApi.getAll().catch(() => []),
+        venuesApi.getAll().catch(() => []),
       ]);
-
-      if (!eventsRes.ok || !venuesRes.ok || !categoriesRes.ok) {
-        throw new Error('Could not load events, venues, or categories.');
-      }
-
-      const [eventsData, venuesData, categoriesData, vendorsData] = await Promise.all([
-        eventsRes.json(),
-        venuesRes.json(),
-        categoriesRes.json(),
-        vendorsRes.ok ? vendorsRes.json() : [],
-      ]);
-
-      setEvents(eventsData);
-      setVenues(venuesData);
-      setCategories(categoriesData);
-      setAllVendors(Array.isArray(vendorsData) ? vendorsData : []);
-    } catch (error) {
-      toast.error(error.message || 'Failed to load events.');
+      setEvents(Array.isArray(mine) ? mine : []);
+      setCategories(Array.isArray(categoryRows) ? categoryRows : []);
+      setVenues(Array.isArray(venueRows) ? venueRows.filter((v) => v.is_active !== false) : []);
+    } catch (err) {
+      setEvents([]);
+      setLoadError(err.message || 'Could not load your events.');
     } finally {
       setLoading(false);
     }
@@ -139,38 +155,6 @@ export default function ManageEvents() {
   useEffect(() => {
     loadEvents();
   }, []);
-  const isAdmin = user?.role?.toLowerCase() === 'admin';
-
-  // Filter events based on role:
-  // Admin sees ALL events. Organizer sees only their OWN events.
-  const userFilteredEvents = useMemo(() => {
-    if (isAdmin) return events;
-    // Organizer filter
-    return events.filter(
-      (e) =>
-        e.organizer_id === user?.user_id ||
-        e.organizer_email?.toLowerCase() === user?.email?.toLowerCase() ||
-        e.organizer?.toLowerCase() === (user?.name || user?.full_name)?.toLowerCase()
-    );
-  }, [events, isAdmin, user]);
-
-  // Search & Status Filter
-  const displayedEvents = useMemo(() => {
-    return userFilteredEvents.filter((e) => {
-      if (statusFilter !== 'All' && e.status !== statusFilter) {
-        return false;
-      }
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchTitle = e.title?.toLowerCase().includes(q);
-        const matchVenue = e.venue?.toLowerCase().includes(q);
-        const matchOrg = e.organizer?.toLowerCase().includes(q);
-        const matchCat = e.category?.toLowerCase().includes(q);
-        if (!matchTitle && !matchVenue && !matchOrg && !matchCat) return false;
-      }
-      return true;
-    });
-  }, [userFilteredEvents, statusFilter, searchQuery]);
 
   // Fetch venue operating hours whenever selected venue changes
   useEffect(() => {
@@ -180,11 +164,7 @@ export default function ManageEvents() {
     }
     let isCancelled = false;
     setLoadingHours(true);
-    fetch(`${API_BASE_URL}/api/venue-hours?venue_id=${formData.venue_id}`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Could not load venue operating hours');
-        return res.json();
-      })
+    venuesApi.getHours(formData.venue_id)
       .then((data) => {
         if (!isCancelled) {
           setVenueHours(Array.isArray(data) ? data : []);
@@ -192,14 +172,10 @@ export default function ManageEvents() {
       })
       .catch((err) => {
         console.error('Failed to load venue hours:', err);
-        if (!isCancelled) {
-          setVenueHours([]);
-        }
+        if (!isCancelled) setVenueHours([]);
       })
       .finally(() => {
-        if (!isCancelled) {
-          setLoadingHours(false);
-        }
+        if (!isCancelled) setLoadingHours(false);
       });
     return () => {
       isCancelled = true;
@@ -302,55 +278,46 @@ export default function ManageEvents() {
     };
   }, [formData.venue_id, formData.start_time, formData.end_time, venues, venueHours, loadingHours]);
 
-  // Helper to format ISO to datetime-local value (YYYY-MM-DDTHH:mm)
-  const toInputDateTime = (dateStr) => {
-    if (!dateStr) return '';
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return '';
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
+  const displayedEvents = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return events.filter((e) => {
+      if (statusFilter !== 'All' && e.status !== statusFilter) return false;
+      if (q) {
+        const haystack = [e.title, e.venue, e.city, e.category].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [events, statusFilter, searchQuery]);
 
-  // Open modal for Create
   const handleOpenCreate = () => {
     setEditingEvent(null);
     const nextWeek = new Date(Date.now() + 7 * 86400000);
     nextWeek.setHours(10, 0, 0, 0);
     const endNextWeek = new Date(nextWeek.getTime() + 6 * 3600000);
-
-    const defaultCatId = categories.length > 0 ? categories[0].category_id : '';
-    const activeVenues = venues.filter((v) => v.is_active !== false);
-    const defaultVenueId = activeVenues.length > 0 ? activeVenues[0].venue_id : (venues.length > 0 ? venues[0].venue_id : '');
-
     setFormData({
-      title: '',
-      category_id: defaultCatId,
-      venue_id: defaultVenueId,
+      ...EMPTY_FORM,
+      category_id: categories[0] ? String(categories[0].category_id) : '',
+      venue_id: venues[0] ? String(venues[0].venue_id) : '',
       start_time: toInputDateTime(nextWeek),
       end_time: toInputDateTime(endNextWeek),
-      ticket_price: '499',
-      capacity: '500',
-      description: '',
-      vendor_ids: [],
     });
     setFormErrors({});
     setModalOpen(true);
   };
 
-  // Open modal for Edit
   const handleOpenEdit = (event) => {
     setEditingEvent(event);
-    const initialVids = Array.isArray(event.vendors) ? event.vendors.map((v) => v.vendor_id) : [];
     setFormData({
       title: event.title || '',
-      category_id: event.category_id || (categories.length > 0 ? categories[0].category_id : ''),
-      venue_id: event.venue_id || (venues.length > 0 ? venues[0].venue_id : ''),
-      start_time: toInputDateTime(event.start_time || event.date),
-      end_time: toInputDateTime(event.end_time || (event.start_time ? new Date(new Date(event.start_time).getTime() + 4 * 3600000) : '')),
-      ticket_price: String(event.ticket_price !== undefined ? event.ticket_price : (event.price || 0)),
-      capacity: String(event.capacity || 100),
+      category_id: event.category_id ? String(event.category_id) : '',
+      venue_id: event.venue_id ? String(event.venue_id) : '',
+      start_time: toInputDateTime(event.start_time),
+      end_time: toInputDateTime(event.end_time),
+      ticket_price: String(event.ticket_price ?? 0),
+      capacity: String(event.capacity ?? ''),
+      status: event.status || 'published',
       description: event.description || '',
-      vendor_ids: initialVids,
     });
     setFormErrors({});
     setModalOpen(true);
@@ -364,21 +331,16 @@ export default function ManageEvents() {
 
     setCategorySubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/categories`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description: newCategoryDesc.trim() || null }),
+      const data = await categoriesApi.create({
+        name,
+        description: newCategoryDesc.trim() || null,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'Could not create category.');
-      }
 
       setCategories((prev) => {
         if (prev.some((c) => c.category_id === data.category_id)) return prev;
         return [...prev, data];
       });
-      setFormData((prev) => ({ ...prev, category_id: data.category_id }));
+      setFormData((prev) => ({ ...prev, category_id: String(data.category_id) }));
       setNewCategoryName('');
       setNewCategoryDesc('');
       setShowCategoryModal(false);
@@ -392,22 +354,15 @@ export default function ManageEvents() {
 
   const validateForm = () => {
     const errs = {};
-    if (!formData.title.trim()) {
+    const title = formData.title.trim();
+    if (!title) {
       errs.title = 'Event title is required';
-    } else if (formData.title.trim().length > 150) {
+    } else if (title.length > 150) {
       errs.title = 'Event title cannot exceed 150 characters';
     }
 
-    if (!formData.category_id) {
-      errs.category_id = 'Please select or add a category';
-    }
     if (!formData.venue_id) {
       errs.venue_id = 'Please select a venue';
-    } else {
-      const selectedVenue = venues.find((v) => Number(v.venue_id) === Number(formData.venue_id));
-      if (selectedVenue && selectedVenue.is_active === false) {
-        errs.venue_id = `Venue "${selectedVenue.name}" is inactive and unavailable for event creation`;
-      }
     }
 
     if (!formData.start_time) {
@@ -416,10 +371,8 @@ export default function ManageEvents() {
     if (!formData.end_time) {
       errs.end_time = 'End time is required';
     }
-    if (formData.start_time && formData.end_time) {
-      if (new Date(formData.end_time) <= new Date(formData.start_time)) {
-        errs.end_time = 'End time must be later than start time';
-      }
+    if (formData.start_time && formData.end_time && new Date(formData.end_time) <= new Date(formData.start_time)) {
+      errs.end_time = 'End time must be later than start time';
     }
 
     // Operating hours check in frontend
@@ -435,8 +388,9 @@ export default function ManageEvents() {
       }
     }
 
-    if (!formData.capacity || Number(formData.capacity) <= 0 || !Number.isInteger(Number(formData.capacity))) {
-      errs.capacity = 'Capacity must be an integer greater than 0';
+    const capacity = Number(formData.capacity);
+    if (!Number.isInteger(capacity) || capacity <= 0) {
+      errs.capacity = 'Capacity must be a whole number above 0';
     }
     if (formData.ticket_price === '' || Number(formData.ticket_price) < 0) {
       errs.ticket_price = 'Price cannot be negative';
@@ -451,215 +405,54 @@ export default function ManageEvents() {
 
     const payload = {
       title: formData.title.trim(),
-      category_id: Number(formData.category_id),
-      venue_id: Number(formData.venue_id),
-      start_time: formData.start_time,
-      end_time: formData.end_time,
+      description: formData.description.trim() || null,
+      category_id: formData.category_id ? Number(formData.category_id) : null,
+      venue_id: formData.venue_id ? Number(formData.venue_id) : null,
+      // datetime-local is the viewer's local time; send it as a full ISO timestamp
+      start_time: new Date(formData.start_time).toISOString(),
+      end_time: new Date(formData.end_time).toISOString(),
       ticket_price: Number(formData.ticket_price),
-      capacity: Number(formData.capacity),
-      description: formData.description.trim(),
-      vendor_ids: Array.isArray(formData.vendor_ids) ? formData.vendor_ids : [],
-      ...(user?.user_id ? { organizer_id: String(user.user_id) } : {}),
+      capacity: parseInt(formData.capacity, 10),
+      status: formData.status,
     };
 
+    setSaving(true);
     try {
-      const url = editingEvent
-        ? `${API_BASE_URL}/api/events/${editingEvent.event_id}`
-        : `${API_BASE_URL}/api/events`;
-
-      const response = await fetch(url, {
-        method: editingEvent ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        let errText = 'Could not save the event.';
-        if (typeof result.detail === 'string') {
-          errText = result.detail;
-        } else if (Array.isArray(result.detail)) {
-          errText = result.detail.map((d) => d.msg || JSON.stringify(d)).join(', ');
-        } else if (result.message) {
-          errText = result.message;
-        }
-        throw new Error(errText);
+      if (editingEvent) {
+        await eventsApi.update(editingEvent.event_id, payload);
+        toast.success(`Event "${payload.title}" updated.`);
+      } else {
+        await eventsApi.create(payload);
+        toast.success(`Event "${payload.title}" created.`);
       }
-
-      await loadEvents();
       setModalOpen(false);
-
-      toast.success(
-        editingEvent
-          ? `Event "${formData.title}" updated successfully!`
-          : `Event "${formData.title}" created successfully!`
-      );
-    } catch (error) {
-      toast.error(error.message || 'Could not save the event.');
-    }
-  };
-
-  // Open Event Vendors Coordination Modal
-  const handleOpenVendorModal = async (event) => {
-    setActiveVendorEvent(event);
-    setSelectedNewVendorId('');
-    setNewVendorAgreedCost('0');
-    setNewVendorStatus('requested');
-    setVendorModalOpen(true);
-    await fetchEventVendors(event.event_id);
-  };
-
-  const fetchEventVendors = async (eventId) => {
-    setLoadingEventVendors(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/events/${eventId}/vendors`);
-      if (!res.ok) throw new Error('Could not fetch vendors for this event');
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : [];
-      setEventVendorsList(list);
-      const initialCosts = {};
-      list.forEach((v) => {
-        initialCosts[v.vendor_id] = v.agreed_cost !== undefined ? String(v.agreed_cost) : '0';
-      });
-      setVendorCosts(initialCosts);
+      await loadEvents();
     } catch (err) {
-      toast.error(err.message || 'Failed to load event vendors');
-      setEventVendorsList([]);
+      // Shows clash error (409) or other backend validation details
+      toast.error(err.message || 'Could not save event.');
     } finally {
-      setLoadingEventVendors(false);
+      setSaving(false);
     }
   };
 
-  const handleAssignVendorToEvent = async (e) => {
-    e.preventDefault();
-    if (!activeVendorEvent || !selectedNewVendorId) return;
-
-    setVendorActionLoading(true);
+  // Cancelling sets status = 'cancelled' (the row is kept, not deleted)
+  const confirmCancelEvent = async () => {
+    if (!eventToCancel) return;
+    setCancelling(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/events/${activeVendorEvent.event_id}/vendors`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          vendor_id: Number(selectedNewVendorId),
-          agreed_cost: Number(newVendorAgreedCost) || 0,
-          booking_status: newVendorStatus,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'Failed to assign vendor');
-      }
-
-      toast.success(data.message || 'Vendor assigned to event!');
-      setSelectedNewVendorId('');
-      setNewVendorAgreedCost('0');
-      setNewVendorStatus('requested');
-      await Promise.all([
-        fetchEventVendors(activeVendorEvent.event_id),
-        loadEvents(),
-      ]);
-    } catch (err) {
-      toast.error(err.message || 'Failed to assign vendor.');
-    } finally {
-      setVendorActionLoading(false);
-    }
-  };
-
-  const handleUpdateVendorStatus = async (vendorId, newStatus) => {
-    if (!activeVendorEvent) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/events/${activeVendorEvent.event_id}/vendors/${vendorId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ booking_status: newStatus }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Failed to update vendor status');
-      toast.success(`Vendor status set to ${newStatus}`);
-      await Promise.all([
-        fetchEventVendors(activeVendorEvent.event_id),
-        loadEvents(),
-      ]);
-    } catch (err) {
-      toast.error(err.message || 'Failed to update status');
-    }
-  };
-
-  const handleUpdateVendorCost = async (vendorId, newCost) => {
-    if (!activeVendorEvent) return;
-    const cost = Number(newCost);
-    if (isNaN(cost) || cost < 0) {
-      toast.error('Agreed cost cannot be negative');
-      return;
-    }
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/events/${activeVendorEvent.event_id}/vendors/${vendorId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agreed_cost: cost }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Failed to update cost');
-      toast.success('Agreed cost updated');
-      await Promise.all([
-        fetchEventVendors(activeVendorEvent.event_id),
-        loadEvents(),
-      ]);
-    } catch (err) {
-      toast.error(err.message || 'Failed to update cost');
-    }
-  };
-
-  const handleRemoveVendorFromEvent = async (vendorId, vendorName) => {
-    if (!activeVendorEvent) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/events/${activeVendorEvent.event_id}/vendors/${vendorId}`, {
-        method: 'DELETE',
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Failed to unassign vendor');
-      toast.info(`Vendor "${vendorName}" unassigned from event.`);
-      await Promise.all([
-        fetchEventVendors(activeVendorEvent.event_id),
-        loadEvents(),
-      ]);
-    } catch (err) {
-      toast.error(err.message || 'Failed to remove vendor');
-    }
-  };
-
-
-  // Cancel Event Confirmation
-  
-const confirmCancelEvent = async () => {
-  if (!eventToCancel) return;
-
-  try {
-    const response = await fetch(
-      `${API_BASE_URL}/api/events/${eventToCancel.event_id}/cancel`,
-      { method: 'PATCH' }
-    );
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        typeof result.detail === 'string'
-          ? result.detail
-          : 'Could not cancel the event.'
+      await eventsApi.update(eventToCancel.event_id, { status: 'cancelled' });
+      setEvents((prev) =>
+        prev.map((ev) => (ev.event_id === eventToCancel.event_id ? { ...ev, status: 'cancelled' } : ev))
       );
+      toast.success(`Event "${eventToCancel.title}" cancelled.`);
+      setCancelModalOpen(false);
+      setEventToCancel(null);
+    } catch (err) {
+      toast.error(`Could not cancel event: ${err.message}`);
+    } finally {
+      setCancelling(false);
     }
-
-    await loadEvents();
-    toast.info(`Event "${eventToCancel.title}" has been cancelled.`);
-    setCancelModalOpen(false);
-    setEventToCancel(null);
-  } catch (error) {
-    toast.error(error.message || 'Could not cancel the event.');
-  }
-};
-
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 md:py-14 w-full animate-fadeIn">
@@ -668,57 +461,65 @@ const confirmCancelEvent = async () => {
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sand-dark/60 text-wine text-xs font-heading uppercase tracking-wider mb-2">
             <Calendar className="w-3.5 h-3.5" />
-            <span>{isAdmin ? 'Admin Master Event Control' : 'Organizer Workspace'}</span>
+            <span>Event Management</span>
           </div>
-          <h1 className="font-heading text-4xl sm:text-5xl md:text-6xl uppercase tracking-tighter text-ink">
-            MANAGE EVENTS
+          <h1 className="font-heading text-3xl md:text-4xl font-black text-ink uppercase tracking-tight">
+            Manage Events
           </h1>
-          <p className="text-ink/70 text-sm sm:text-base mt-1 max-w-2xl">
-            {isAdmin
-              ? 'Oversee all platform events across all organizers, review ticket distributions, and adjust lifecycle statuses.'
-              : `Manage your scheduled events, ticket capacities, and staging venues as ${user?.full_name || 'Organizer'}.`}
+          <p className="text-sm text-ink/70 mt-1 max-w-2xl font-serif">
+            Schedule, monitor, and coordinate events hosted across your venues.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Create Event CTA moved here */}
           <button
             type="button"
-            id="create-event-button"
-            onClick={handleOpenCreate}
-            className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-md focus:outline-none focus:ring-2 focus:ring-wine-light"
+            onClick={loadEvents}
+            disabled={loading}
+            className="p-2.5 rounded-xl border border-sand-dark bg-sand hover:bg-sand-dark/60 text-ink transition-colors disabled:opacity-50"
+            title="Refresh events list"
           >
-            <Plus className="w-4 h-4 stroke-[3]" />
-            <span>Create Event</span>
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-wine' : ''}`} />
           </button>
 
           <button
             type="button"
-            onClick={loadEvents}
-            className="p-3 rounded-xl border border-sand-dark bg-sand text-ink hover:bg-sand-dark/40 transition-colors"
-            title="Refresh events"
+            onClick={handleOpenCreate}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-md active:scale-95"
           >
-            <RefreshCw className="w-4 h-4" />
+            <Plus className="w-4 h-4" />
+            <span>Create Event</span>
           </button>
         </div>
       </div>
+
+      {/* Load error banner */}
+      {loadError && (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs font-medium mb-6 flex items-start gap-2.5">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
+          <div className="flex-1">
+            <strong>Failed to load events: </strong>
+            {loadError}
+          </div>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-sand rounded-2xl border border-sand-dark p-4 mb-6 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
         {/* Status Filter Tabs */}
         <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-          {['All', 'Scheduled', 'Completed', 'Cancelled'].map((st) => (
+          {STATUS_TABS.map((st) => (
             <button
-              key={st}
+              key={st.value}
               type="button"
-              onClick={() => setStatusFilter(st)}
+              onClick={() => setStatusFilter(st.value)}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-heading uppercase tracking-wider font-bold transition-colors whitespace-nowrap ${
-                statusFilter === st
+                statusFilter === st.value
                   ? 'bg-wine text-sand shadow-sm'
                   : 'bg-sand-dark/40 text-ink/70 hover:bg-sand-dark/70 hover:text-ink'
               }`}
             >
-              {st}
+              {st.label}
             </button>
           ))}
         </div>
@@ -743,7 +544,6 @@ const confirmCancelEvent = async () => {
             <thead>
               <tr className="bg-sand-dark/60 text-wine border-b border-sand-dark font-heading uppercase tracking-wider text-[11px]">
                 <th className="p-4">Event Details</th>
-                {isAdmin && <th className="p-4">Organizer</th>}
                 <th className="p-4">Venue & City</th>
                 <th className="p-4">Date & Time</th>
                 <th className="p-4">Ticket Price</th>
@@ -753,10 +553,16 @@ const confirmCancelEvent = async () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-sand-dark/60 font-medium">
-              {displayedEvents.length > 0 ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="p-10 text-center text-ink/60">
+                    Loading your events…
+                  </td>
+                </tr>
+              ) : displayedEvents.length > 0 ? (
                 displayedEvents.map((ev) => {
                   const pct = ev.capacity
-                    ? Math.min(100, Math.round((ev.tickets_sold / ev.capacity) * 100))
+                    ? Math.min(100, Math.round((Number(ev.tickets_sold || 0) / ev.capacity) * 100))
                     : 0;
 
                   return (
@@ -766,29 +572,10 @@ const confirmCancelEvent = async () => {
                         <span className="font-heading text-ink text-sm block max-w-xs truncate" title={ev.title}>
                           {ev.title}
                         </span>
-                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                          <span className="text-[10px] text-wine font-semibold uppercase tracking-wider">
-                            {ev.category}
-                          </span>
-                          {(ev.vendors_count > 0 || (ev.vendors && ev.vendors.length > 0)) && (
-                            <span
-                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-wine/10 text-wine text-[10px] font-semibold border border-wine/20"
-                              title={(ev.vendors || []).map((v) => `${v.vendor_name} (${v.service_name})`).join(', ')}
-                            >
-                              <Store className="w-2.5 h-2.5" />
-                              <span>{ev.vendors_count || ev.vendors?.length} vendor{(ev.vendors_count || ev.vendors?.length) > 1 ? 's' : ''}</span>
-                            </span>
-                          )}
-                        </div>
+                        <span className="text-[10px] text-wine font-semibold uppercase tracking-wider">
+                          {ev.category}
+                        </span>
                       </td>
-
-                      {/* Organizer Column (Only visible to Admin) */}
-                      {isAdmin && (
-                        <td className="p-4 text-ink font-semibold whitespace-nowrap">
-                          <span className="block">{ev.organizer}</span>
-                          <span className="text-[10px] text-ink/50 font-normal">{ev.organizer_email}</span>
-                        </td>
-                      )}
 
                       {/* Venue & City */}
                       <td className="p-4 text-ink/80 whitespace-nowrap">
@@ -798,9 +585,9 @@ const confirmCancelEvent = async () => {
 
                       {/* Start Time & End Time */}
                       <td className="p-4 text-ink/80 whitespace-nowrap">
-                        <div className="font-semibold text-ink">{ev.start_time || ev.date}</div>
+                        <div className="font-semibold text-ink">{formatDateTime(ev.start_time)}</div>
                         {ev.end_time && (
-                          <div className="text-[10px] text-ink/60 font-mono">to {ev.end_time}</div>
+                          <div className="text-[10px] text-ink/60">to {formatDateTime(ev.end_time)}</div>
                         )}
                       </td>
 
@@ -813,7 +600,7 @@ const confirmCancelEvent = async () => {
                       <td className="p-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-ink">
-                            {ev.tickets_sold}
+                            {Number(ev.tickets_sold || 0)}
                           </span>
                           <span className="text-ink/60">/ {ev.capacity}</span>
                           <span className="text-[10px] bg-sand-dark px-1.5 py-0.5 rounded font-bold text-ink">
@@ -826,39 +613,16 @@ const confirmCancelEvent = async () => {
                       <td className="p-4 text-center whitespace-nowrap">
                         <span
                           className={`inline-block px-3 py-1 rounded-full text-[10px] font-heading uppercase tracking-wider font-bold ${
-                            ev.status === 'Scheduled'
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : ev.status === 'Completed'
-                              ? 'bg-sand-dark text-ink border border-sand-dark'
-                              : 'bg-red-100 text-red-800 border border-red-300'
+                            STATUS_STYLES[ev.status] || 'bg-sand-dark text-ink border border-sand-dark'
                           }`}
                         >
                           {ev.status}
                         </span>
                       </td>
 
-                      {/* Actions: Vendors, Edit, Cancel */}
+                      {/* Actions: Edit, Cancel */}
                       <td className="p-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenVendorModal(ev)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-sand-dark bg-sand text-ink hover:bg-wine hover:text-sand hover:border-wine text-xs font-semibold transition-all shadow-sm"
-                            title="Manage Vendors for this Event (event_vendors table)"
-                          >
-                            <Store className="w-3.5 h-3.5" />
-                            <span>Vendors</span>
-                            <span
-                              className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                                (ev.vendors_count || ev.vendors?.length || 0) > 0
-                                  ? 'bg-wine text-sand'
-                                  : 'bg-sand-dark/70 text-ink'
-                              }`}
-                            >
-                              {ev.vendors_count !== undefined ? ev.vendors_count : (ev.vendors?.length || 0)}
-                            </span>
-                          </button>
-
                           <button
                             type="button"
                             onClick={() => handleOpenEdit(ev)}
@@ -869,7 +633,7 @@ const confirmCancelEvent = async () => {
                             <span>Edit</span>
                           </button>
 
-                          {ev.status !== 'Cancelled' && (
+                          {ev.status !== 'cancelled' && ev.status !== 'completed' && (
                             <button
                               type="button"
                               onClick={() => {
@@ -890,8 +654,10 @@ const confirmCancelEvent = async () => {
                 })
               ) : (
                 <tr>
-                  <td colSpan={isAdmin ? 8 : 7} className="p-10 text-center text-ink/60">
-                    No events found. Click <strong>"Create Event"</strong> to schedule one.
+                  <td colSpan={7} className="p-10 text-center text-ink/60">
+                    {events.length === 0
+                      ? <>You haven't created any events yet. Click <strong>"Create Event"</strong> to add one.</>
+                      : 'No events match this filter.'}
                   </td>
                 </tr>
               )}
@@ -900,43 +666,32 @@ const confirmCancelEvent = async () => {
         </div>
       </div>
 
-      {/* =========================================================================
-          CREATE / EDIT EVENT MODAL
-          ========================================================================= */}
+      {/* Create / Edit Modal */}
       {modalOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm animate-fadeIn"
-        >
-          <div className="bg-sand text-ink rounded-2xl max-w-2xl w-full border border-sand-dark shadow-poster p-6 relative max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-sand border border-sand-dark rounded-2xl max-w-xl w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
             <button
               type="button"
               onClick={() => setModalOpen(false)}
-              className="absolute top-4 right-4 text-ink/50 hover:text-ink p-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-wine"
+              className="absolute top-5 right-5 p-1 rounded-lg text-ink/60 hover:text-ink hover:bg-sand-dark/40 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-9 h-9 rounded-xl bg-wine/10 text-wine flex items-center justify-center">
-                <Calendar className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-heading text-xl uppercase tracking-tight text-ink">
-                  {editingEvent ? 'Edit Event Details' : 'Create New Event'}
-                </h3>
-                <p className="text-xs text-ink/70">
-                  {editingEvent ? `Updating #${editingEvent.event_id}` : 'Fill in the event parameters'}
-                </p>
-              </div>
+            <div className="mb-5">
+              <h3 className="font-heading text-xl font-bold uppercase tracking-wide text-ink">
+                {editingEvent ? 'Edit Event' : 'Create New Event'}
+              </h3>
+              <p className="text-xs text-ink/70 font-serif mt-0.5">
+                Fill in the details below. Venue operating hours will be checked automatically.
+              </p>
             </div>
 
-            <form onSubmit={handleFormSubmit} className="space-y-4" noValidate>
-              {/* Event Title */}
+            <form onSubmit={handleFormSubmit} className="space-y-4">
+              {/* Title */}
               <div className="space-y-1">
                 <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                  Event Title <span className="text-red-700">*</span>
+                  Title <span className="text-red-700">*</span>
                 </label>
                 <input
                   type="text"
@@ -955,64 +710,44 @@ const confirmCancelEvent = async () => {
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                      Category (Foreign Key) <span className="text-red-700">*</span>
+                      Category
                     </label>
                     <button
                       type="button"
                       onClick={() => setShowCategoryModal(true)}
-                      className="text-[11px] font-bold text-wine hover:underline flex items-center gap-1"
+                      className="text-[10px] text-wine font-bold hover:underline inline-flex items-center gap-0.5"
                     >
                       <Plus className="w-3 h-3" /> New
                     </button>
                   </div>
                   <select
-                    id="event-category-select"
                     value={formData.category_id}
-                    onChange={(e) => setFormData({ ...formData, category_id: e.target.value ? Number(e.target.value) : '' })}
+                    onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
                     className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                   >
-                    {categories.length === 0 ? (
-                      <option value="">-- No categories in database --</option>
-                    ) : (
-                      <>
-                        <option value="">-- Select Category --</option>
-                        {categories.map((c) => (
-                          <option key={c.category_id} value={c.category_id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </>
-                    )}
+                    <option value="">No category</option>
+                    {categories.map((c) => (
+                      <option key={c.category_id} value={String(c.category_id)}>
+                        {c.name}
+                      </option>
+                    ))}
                   </select>
-                  {formErrors.category_id && <p className="text-xs text-red-700">{formErrors.category_id}</p>}
-                  {categories.length === 0 && (
-                    <div className="mt-1.5 p-2.5 bg-sand-dark/40 border border-sand-dark rounded-xl flex items-center justify-between text-xs text-ink/80">
-                      <span>No categories found.</span>
-                      <button
-                        type="button"
-                        onClick={() => setShowCategoryModal(true)}
-                        className="px-2.5 py-1 bg-wine text-sand rounded-lg text-[11px] font-heading uppercase tracking-wider font-bold hover:bg-wine-dark transition shadow-sm"
-                      >
-                        + Create Category
-                      </button>
-                    </div>
-                  )}
                 </div>
 
                 <div className="space-y-1">
                   <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                    Venue (Foreign Key) <span className="text-red-700">*</span>
+                    Venue <span className="text-red-700">*</span>
                   </label>
                   <select
-                    id="event-venue-select"
                     value={formData.venue_id}
-                    onChange={(e) => setFormData({ ...formData, venue_id: e.target.value ? Number(e.target.value) : '' })}
+                    onChange={(e) => setFormData({ ...formData, venue_id: e.target.value })}
+                    required
                     className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                   >
-                    <option value="">-- Select Venue --</option>
+                    <option value="">Select a venue</option>
                     {venues.map((v) => (
-                      <option key={v.venue_id} value={v.venue_id} disabled={v.is_active === false}>
-                        {v.name} ({v.city}){v.is_active === false ? ' — [Inactive]' : ''}
+                      <option key={v.venue_id} value={String(v.venue_id)}>
+                        {v.name} ({v.city})
                       </option>
                     ))}
                   </select>
@@ -1027,7 +762,6 @@ const confirmCancelEvent = async () => {
                     Start Time <span className="text-red-700">*</span>
                   </label>
                   <input
-                    id="event-start-time-input"
                     type="datetime-local"
                     required
                     value={formData.start_time}
@@ -1042,7 +776,6 @@ const confirmCancelEvent = async () => {
                     End Time <span className="text-red-700">*</span>
                   </label>
                   <input
-                    id="event-end-time-input"
                     type="datetime-local"
                     required
                     value={formData.end_time}
@@ -1053,44 +786,33 @@ const confirmCancelEvent = async () => {
                 </div>
               </div>
 
-              {/* Venue Operating Hours Display Banner */}
+              {/* Live Venue Operating Hours Schedule Indicator */}
               {formData.venue_id && (
                 <div
-                  id="venue-operating-hours-display"
-                  className={`p-3 rounded-xl border flex items-start gap-2.5 text-xs transition-all ${
-                    hoursInfo.status === 'open' && !hoursInfo.hasWarning
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-950'
-                      : hoursInfo.status === 'open' && hoursInfo.hasWarning
-                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-950'
-                      : hoursInfo.status === 'closed'
-                      ? 'bg-rose-500/10 border-rose-500/30 text-rose-950'
-                      : hoursInfo.status === 'unconfigured'
-                      ? 'bg-amber-500/15 border-amber-600/40 text-amber-950'
-                      : hoursInfo.status === 'inactive'
-                      ? 'bg-rose-500/10 border-rose-500/30 text-rose-950'
-                      : 'bg-sand-dark/40 border-sand-dark text-ink/70'
+                  className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 transition-all ${
+                    hoursInfo.status === 'closed' || hoursInfo.status === 'inactive'
+                      ? 'bg-red-50 border-red-200 text-red-800'
+                      : hoursInfo.hasWarning
+                      ? 'bg-amber-50 border-amber-200 text-amber-900'
+                      : hoursInfo.status === 'open'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                      : 'bg-sand-dark/40 border-sand-dark text-ink/80'
                   }`}
                 >
-                  {hoursInfo.status === 'open' && !hoursInfo.hasWarning ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                  ) : hoursInfo.status === 'closed' ? (
-                    <Ban className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
-                  ) : hoursInfo.status === 'open' && hoursInfo.hasWarning ? (
-                    <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                  ) : hoursInfo.status === 'unconfigured' ? (
-                    <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                  ) : hoursInfo.status === 'inactive' ? (
-                    <AlertCircle className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
+                  {hoursInfo.status === 'closed' || hoursInfo.status === 'inactive' ? (
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  ) : hoursInfo.hasWarning ? (
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  ) : hoursInfo.status === 'open' ? (
+                    <Clock className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                   ) : (
                     <Clock className="w-4 h-4 text-ink/50 shrink-0 mt-0.5" />
                   )}
-                  <div className="space-y-0.5 flex-1">
-                    <p className="font-heading font-bold uppercase tracking-wide">
+                  <div className="flex-1">
+                    <p className="font-heading font-bold uppercase tracking-wider text-[11px]">
                       {hoursInfo.title}
                     </p>
-                    {hoursInfo.message && (
-                      <p className="text-[11px] leading-relaxed opacity-90">{hoursInfo.message}</p>
-                    )}
+                    <p className="text-xs mt-0.5 leading-relaxed">{hoursInfo.message}</p>
                   </div>
                 </div>
               )}
@@ -1133,6 +855,23 @@ const confirmCancelEvent = async () => {
                 </div>
               </div>
 
+              {/* Status */}
+              <div className="space-y-1">
+                <label htmlFor="event-status" className="block text-xs font-heading uppercase tracking-wider text-ink">
+                  Status
+                </label>
+                <select
+                  id="event-status"
+                  value={formData.status}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                  className="w-full px-3 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-wine"
+                >
+                  {STATUS_TABS.filter((t) => t.value !== 'All').map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+
               {/* Description */}
               <div className="space-y-1">
                 <label className="block text-xs font-heading uppercase tracking-wider text-ink">
@@ -1147,86 +886,6 @@ const confirmCancelEvent = async () => {
                 />
               </div>
 
-              {/* Select Vendors Needed for Event (saved to event_vendors table) */}
-              <div className="space-y-2 pt-3 border-t border-sand-dark">
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-1.5 text-xs font-heading uppercase tracking-wider text-ink font-bold">
-                    <Store className="w-4 h-4 text-wine" />
-                    <span>Select Vendors Needed for Event</span>
-                  </label>
-                  <span className="text-[11px] font-semibold text-wine bg-wine/10 px-2.5 py-0.5 rounded-full border border-wine/20">
-                    {(formData.vendor_ids || []).length} selected
-                  </span>
-                </div>
-                <p className="text-[11px] text-ink/70">
-                  Select available vendors (catering, photography, sound, decoration, etc.) required for this event. These will be automatically added to the <code className="font-mono text-[10px] bg-sand-dark/60 px-1 py-0.5 rounded">event_vendors</code> table.
-                </p>
-
-                {allVendors.length === 0 ? (
-                  <div className="p-3 bg-sand-dark/30 rounded-xl text-center text-xs text-ink/60 border border-dashed border-sand-dark">
-                    No vendors found in system. Register vendors in the Vendors module.
-                  </div>
-                ) : (
-                  <div className="max-h-52 overflow-y-auto border border-sand-dark rounded-xl p-2 bg-sand-dark/20 space-y-1.5">
-                    {allVendors.map((vendor) => {
-                      const isSelected = (formData.vendor_ids || []).includes(vendor.vendor_id);
-                      return (
-                        <div
-                          key={vendor.vendor_id}
-                          onClick={() => {
-                            const current = formData.vendor_ids || [];
-                            const updated = isSelected
-                              ? current.filter((id) => id !== vendor.vendor_id)
-                              : [...current, vendor.vendor_id];
-                            setFormData({ ...formData, vendor_ids: updated });
-                          }}
-                          className={`flex items-start gap-3 p-2.5 rounded-xl transition-all cursor-pointer select-none ${
-                            isSelected
-                              ? 'bg-wine/10 border border-wine/40 shadow-xs'
-                              : 'bg-sand hover:bg-sand-dark/40 border border-transparent'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            id={`vendor-select-${vendor.vendor_id}`}
-                            checked={isSelected}
-                            onChange={() => {}}
-                            className="mt-0.5 w-4 h-4 rounded text-wine border-sand-dark focus:ring-wine accent-wine cursor-pointer"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-heading font-bold text-xs text-ink truncate">
-                                {vendor.vendor_name}
-                              </span>
-                              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-heading uppercase font-semibold bg-wine/10 text-wine border border-wine/20 whitespace-nowrap">
-                                {vendor.service_name || 'Vendor'}
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-ink/70 mt-1">
-                              {vendor.phone && (
-                                <span className="flex items-center gap-1">
-                                  <Phone className="w-3 h-3 text-ink/40" /> {vendor.phone}
-                                </span>
-                              )}
-                              {vendor.email && (
-                                <span className="flex items-center gap-1">
-                                  <Mail className="w-3 h-3 text-ink/40" /> {vendor.email}
-                                </span>
-                              )}
-                              {vendor.pricing && (
-                                <span className="font-semibold text-emerald-800">
-                                  Rate: {typeof vendor.pricing === 'number' ? `₹${vendor.pricing}` : vendor.pricing}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
               {/* Buttons */}
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-sand-dark">
                 <button
@@ -1238,9 +897,10 @@ const confirmCancelEvent = async () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-sm"
+                  disabled={saving}
+                  className="px-5 py-2.5 rounded-xl bg-wine text-sand font-heading text-xs uppercase tracking-wider font-bold hover:bg-wine-dark transition-all shadow-sm disabled:opacity-60"
                 >
-                  {editingEvent ? 'Save Changes' : 'Create Event'}
+                  {saving ? 'Saving…' : editingEvent ? 'Save Changes' : 'Create Event'}
                 </button>
               </div>
             </form>
@@ -1250,32 +910,25 @@ const confirmCancelEvent = async () => {
 
       {/* Quick Add Category Modal */}
       {showCategoryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/70 backdrop-blur-sm animate-fade-in">
-          <div className="bg-sand border-2 border-wine/30 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-sand-dark">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-wine/10 text-wine">
-                  <Sparkles className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-heading font-black text-lg text-ink uppercase tracking-wide">
-                    Create New Category
-                  </h3>
-                  <p className="text-xs text-ink/70">Save directly to Supabase categories table</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowCategoryModal(false)}
-                className="p-1 rounded-lg text-ink/60 hover:text-ink hover:bg-sand-dark/50"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateCategory} className="space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-sand border border-sand-dark rounded-2xl max-w-sm w-full p-5 shadow-2xl relative">
+            <button
+              type="button"
+              onClick={() => setShowCategoryModal(false)}
+              className="absolute top-4 right-4 p-1 rounded-lg text-ink/60 hover:text-ink hover:bg-sand-dark/40 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <h3 className="font-heading text-base font-bold uppercase tracking-wide text-ink mb-1 flex items-center gap-2">
+              <Tag className="w-4 h-4 text-wine" />
+              <span>Add Category</span>
+            </h3>
+            <p className="text-xs text-ink/70 font-serif mb-4">
+              Create a new category for tagging your events.
+            </p>
+            <form onSubmit={handleCreateCategory} className="space-y-3">
               <div className="space-y-1">
-                <label className="block text-xs font-heading uppercase tracking-wider text-ink">
+                <label className="block text-xs font-heading uppercase tracking-wider text-ink font-semibold">
                   Category Name <span className="text-red-700">*</span>
                 </label>
                 <input
@@ -1284,39 +937,37 @@ const confirmCancelEvent = async () => {
                   maxLength={80}
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
-                  placeholder="e.g. Technology & AI, Music, Sports"
-                  className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine"
+                  placeholder="e.g. Workshop, Hackathon"
+                  className="w-full px-3 py-2 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink focus:outline-none focus:ring-2 focus:ring-wine"
                 />
               </div>
-
               <div className="space-y-1">
-                <label className="block text-xs font-heading uppercase tracking-wider text-ink">
-                  Description <span className="text-ink/60 font-normal lowercase">(optional)</span>
+                <label className="block text-xs font-heading uppercase tracking-wider text-ink font-semibold">
+                  Description
                 </label>
-                <input
-                  type="text"
+                <textarea
+                  rows={2}
                   maxLength={255}
                   value={newCategoryDesc}
                   onChange={(e) => setNewCategoryDesc(e.target.value)}
-                  placeholder="Short description of this category"
-                  className="w-full px-3.5 py-2.5 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine"
+                  placeholder="Optional brief description..."
+                  className="w-full px-3 py-2 bg-sand-dark/30 border border-sand-dark rounded-xl text-xs font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine"
                 />
               </div>
-
-              <div className="flex items-center justify-end gap-3 pt-2">
+              <div className="flex justify-end gap-2 pt-2 border-t border-sand-dark">
                 <button
                   type="button"
                   onClick={() => setShowCategoryModal(false)}
-                  className="px-4 py-2 border border-sand-dark rounded-xl text-xs font-bold uppercase tracking-wider text-ink hover:bg-sand-dark/50 transition"
+                  className="px-3 py-1.5 rounded-lg border border-sand-dark text-xs font-heading uppercase font-bold text-ink hover:bg-sand-dark/40"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={categorySubmitting}
-                  className="px-5 py-2 bg-wine text-sand rounded-xl text-xs font-heading font-black uppercase tracking-wider hover:bg-wine-dark transition shadow-md disabled:opacity-50"
+                  disabled={categorySubmitting || !newCategoryName.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-wine text-sand text-xs font-heading uppercase font-bold hover:bg-wine-dark transition-all disabled:opacity-50"
                 >
-                  {categorySubmitting ? 'Saving...' : 'Save Category'}
+                  {categorySubmitting ? 'Adding...' : 'Add Category'}
                 </button>
               </div>
             </form>
@@ -1328,290 +979,17 @@ const confirmCancelEvent = async () => {
       <ConfirmModal
         isOpen={cancelModalOpen}
         title="Cancel This Event?"
-        message={`Are you sure you want to cancel "${eventToCancel?.title}"? Ticket sales will immediately be halted.`}
+        message={`Cancel "${eventToCancel?.title}"? Its status becomes "cancelled"; the event stays in the database.`}
         confirmText="Confirm Cancellation"
         cancelText="Keep Active"
         isDanger={true}
+        isLoading={cancelling}
         onConfirm={confirmCancelEvent}
         onClose={() => {
           setCancelModalOpen(false);
           setEventToCancel(null);
         }}
       />
-
-      {/* =========================================================================
-          EVENT VENDORS COORDINATION MODAL (event_vendors table)
-          ========================================================================= */}
-      {vendorModalOpen && activeVendorEvent && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/70 backdrop-blur-sm animate-fadeIn"
-        >
-          <div className="bg-sand text-ink rounded-2xl max-w-3xl w-full border border-sand-dark shadow-poster p-6 relative max-h-[90vh] overflow-y-auto space-y-5">
-            {/* Modal Header */}
-            <div className="flex items-start justify-between pb-3 border-b border-sand-dark">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-wine/10 text-wine flex items-center justify-center shrink-0">
-                  <Store className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-heading text-lg uppercase tracking-tight text-ink font-black">
-                    Event Vendors Coordination
-                  </h3>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-ink/70 mt-0.5">
-                    <span className="font-bold text-wine">{activeVendorEvent.title}</span>
-                    <span>•</span>
-                    <span>#{activeVendorEvent.event_id}</span>
-                    <span>•</span>
-                    <span>Venue: {activeVendorEvent.venue}</span>
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setVendorModalOpen(false);
-                  setActiveVendorEvent(null);
-                }}
-                className="p-1 rounded-lg text-ink/50 hover:text-ink hover:bg-sand-dark/50 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Currently Assigned Vendors List */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="font-heading text-xs uppercase tracking-wider font-bold text-ink flex items-center gap-2">
-                  <Briefcase className="w-4 h-4 text-wine" />
-                  <span>Assigned Vendors ({eventVendorsList.length})</span>
-                </h4>
-                <span className="text-[11px] text-ink/60">
-                  Synced directly with <code className="font-mono bg-sand-dark/60 px-1 py-0.5 rounded text-[10px]">event_vendors</code> table
-                </span>
-              </div>
-
-              {loadingEventVendors ? (
-                <div className="p-8 text-center text-xs text-ink/60 flex items-center justify-center gap-2">
-                  <RefreshCw className="w-4 h-4 animate-spin text-wine" />
-                  <span>Loading assigned vendors...</span>
-                </div>
-              ) : eventVendorsList.length === 0 ? (
-                <div className="p-6 bg-sand-dark/20 border border-dashed border-sand-dark rounded-xl text-center space-y-1">
-                  <p className="font-heading font-semibold text-xs text-ink">No Vendors Assigned Yet</p>
-                  <p className="text-[11px] text-ink/60">
-                    Use the form below to assign required vendors (catering, photography, sound, etc.) to this event.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {eventVendorsList.map((evVendor) => {
-                    return (
-                      <div
-                        key={evVendor.vendor_id}
-                        className="p-3.5 bg-sand-dark/25 border border-sand-dark rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3"
-                      >
-                        {/* Vendor Info */}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-heading font-bold text-sm text-ink truncate">
-                              {evVendor.vendor_name}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-heading uppercase font-semibold bg-wine/10 text-wine border border-wine/20 shrink-0">
-                              {evVendor.service_name}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink/70 mt-1">
-                            {evVendor.phone && (
-                              <span className="flex items-center gap-1">
-                                <Phone className="w-3 h-3 text-ink/50" /> {evVendor.phone}
-                              </span>
-                            )}
-                            {evVendor.email && (
-                              <span className="flex items-center gap-1">
-                                <Mail className="w-3 h-3 text-ink/50" /> {evVendor.email}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Status & Agreed Cost Controls */}
-                        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                          {/* Booking Status Dropdown */}
-                          <div className="flex flex-col gap-0.5">
-                            <label className="text-[10px] font-heading uppercase tracking-wider text-ink/60 font-semibold">
-                              Booking Status
-                            </label>
-                            <select
-                              value={evVendor.booking_status || 'requested'}
-                              onChange={(e) => handleUpdateVendorStatus(evVendor.vendor_id, e.target.value)}
-                              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border focus:outline-none focus:ring-1 focus:ring-wine transition-colors ${
-                                evVendor.booking_status === 'confirmed'
-                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                  : evVendor.booking_status === 'cancelled'
-                                  ? 'bg-red-100 text-red-800 border-red-300'
-                                  : 'bg-amber-100 text-amber-800 border-amber-300'
-                              }`}
-                            >
-                              <option value="requested">Requested</option>
-                              <option value="confirmed">Confirmed</option>
-                              <option value="cancelled">Cancelled</option>
-                            </select>
-                          </div>
-
-                          {/* Agreed Cost Input with Save */}
-                          <div className="flex flex-col gap-0.5">
-                            <label className="text-[10px] font-heading uppercase tracking-wider text-ink/60 font-semibold">
-                              Agreed Cost (₹)
-                            </label>
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="number"
-                                min="0"
-                                step="100"
-                                value={vendorCosts[evVendor.vendor_id] !== undefined ? vendorCosts[evVendor.vendor_id] : String(evVendor.agreed_cost || 0)}
-                                onChange={(e) =>
-                                  setVendorCosts({
-                                    ...vendorCosts,
-                                    [evVendor.vendor_id]: e.target.value,
-                                  })
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    handleUpdateVendorCost(evVendor.vendor_id, vendorCosts[evVendor.vendor_id]);
-                                  }
-                                }}
-                                className="w-24 px-2 py-1.5 bg-sand border border-sand-dark rounded-lg text-xs font-semibold text-ink focus:outline-none focus:ring-1 focus:ring-wine"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleUpdateVendorCost(evVendor.vendor_id, vendorCosts[evVendor.vendor_id])
-                                }
-                                title="Save Agreed Cost"
-                                className="p-1.5 rounded-lg bg-wine text-sand hover:bg-wine-dark transition-colors"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Remove Vendor */}
-                          <div className="flex flex-col gap-0.5">
-                            <label className="text-[10px] font-heading uppercase tracking-wider text-transparent select-none">
-                              Action
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveVendorFromEvent(evVendor.vendor_id, evVendor.vendor_name)}
-                              title="Unassign vendor from this event"
-                              className="p-1.5 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-700 hover:text-white transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Section: Assign Another Vendor */}
-            <div className="pt-4 border-t border-sand-dark space-y-3">
-              <h4 className="font-heading text-xs uppercase tracking-wider font-bold text-ink flex items-center gap-2">
-                <Plus className="w-4 h-4 text-wine" />
-                <span>Assign Another Vendor to this Event</span>
-              </h4>
-
-              <form onSubmit={handleAssignVendorToEvent} className="p-3.5 bg-sand-dark/20 border border-sand-dark rounded-xl space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* Vendor Dropdown */}
-                  <div className="space-y-1 sm:col-span-1">
-                    <label className="block text-[11px] font-heading uppercase tracking-wider text-ink font-semibold">
-                      Vendor <span className="text-red-700">*</span>
-                    </label>
-                    <select
-                      value={selectedNewVendorId}
-                      onChange={(e) => setSelectedNewVendorId(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 bg-sand border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-1 focus:ring-wine"
-                    >
-                      <option value="">-- Choose Vendor --</option>
-                      {allVendors
-                        .filter((v) => !eventVendorsList.some((ev) => ev.vendor_id === v.vendor_id))
-                        .map((v) => (
-                          <option key={v.vendor_id} value={v.vendor_id}>
-                            {v.vendor_name} ({v.service_name})
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-
-                  {/* Agreed Cost */}
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-heading uppercase tracking-wider text-ink font-semibold">
-                      Agreed Cost (₹)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="100"
-                      value={newVendorAgreedCost}
-                      onChange={(e) => setNewVendorAgreedCost(e.target.value)}
-                      placeholder="0"
-                      className="w-full px-3 py-2 bg-sand border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-1 focus:ring-wine"
-                    />
-                  </div>
-
-                  {/* Initial Status */}
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-heading uppercase tracking-wider text-ink font-semibold">
-                      Booking Status
-                    </label>
-                    <select
-                      value={newVendorStatus}
-                      onChange={(e) => setNewVendorStatus(e.target.value)}
-                      className="w-full px-3 py-2 bg-sand border border-sand-dark rounded-xl text-xs font-semibold text-ink focus:outline-none focus:ring-1 focus:ring-wine"
-                    >
-                      <option value="requested">Requested</option>
-                      <option value="confirmed">Confirmed</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-1">
-                  <button
-                    type="submit"
-                    disabled={!selectedNewVendorId || vendorActionLoading}
-                    className="px-4 py-2 bg-wine text-sand rounded-xl text-xs font-heading font-black uppercase tracking-wider hover:bg-wine-dark transition-all shadow-sm disabled:opacity-50 flex items-center gap-1.5"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>{vendorActionLoading ? 'Assigning...' : 'Assign Vendor'}</span>
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="pt-3 border-t border-sand-dark flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setVendorModalOpen(false);
-                  setActiveVendorEvent(null);
-                }}
-                className="px-5 py-2 rounded-xl bg-ink text-sand text-xs font-heading font-bold uppercase tracking-wider hover:bg-ink/90 transition-colors"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

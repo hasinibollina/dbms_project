@@ -5,6 +5,17 @@
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+function getStoredToken() {
+  try {
+    const raw = localStorage.getItem('eventilion_user');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.token || parsed?.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
   
@@ -12,6 +23,11 @@ async function request(endpoint, options = {}) {
     'Content-Type': 'application/json',
     ...options.headers,
   };
+
+  const token = getStoredToken();
+  if (token && !headers['Authorization'] && !headers['authorization']) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
 
   const config = {
     ...options,
@@ -39,7 +55,16 @@ async function request(endpoint, options = {}) {
     }
 
     if (!response.ok) {
-      const errorMessage = data?.detail || data?.message || `Request failed with status ${response.status}`;
+      // FastAPI sends detail as a string, or as a list of {loc, msg} for validation errors
+      let errorMessage = data?.detail ?? data?.message;
+      if (Array.isArray(errorMessage)) {
+        errorMessage = errorMessage
+          .map((d) => (d?.loc ? `${d.loc.slice(1).join('.')}: ${d.msg}` : d?.msg || JSON.stringify(d)))
+          .join('; ');
+      } else if (errorMessage && typeof errorMessage === 'object') {
+        errorMessage = JSON.stringify(errorMessage);
+      }
+      errorMessage = errorMessage || `Request failed with status ${response.status}`;
       const error = new Error(errorMessage);
       error.status = response.status;
       error.data = data;
@@ -69,13 +94,14 @@ function groupHours(rows) {
 }
 
 export const venuesApi = {
-  getAll: async () => {
-    const [venues, hours] = await Promise.all([
-      request('/api/venues'),
-      request('/api/venue-hours'),
-    ]);
-    const byVenue = groupHours(hours);
-    return (venues || []).map((v) => ({ ...v, hours: byVenue[v.venue_id] || [] }));
+    getAll: async () => {
+    // Trailing slash matters: the backend route is /api/venues/ and browsers
+    // refuse the redirect FastAPI sends for /api/venues on authenticated requests.
+    const venues = await request('/api/venues/');
+    return (venues || []).map((v) => ({
+      ...v,
+      hours: v.hours || [],
+    }));
   },
 
   getById: async (id) => {
@@ -87,7 +113,7 @@ export const venuesApi = {
   },
 
   // Backend responds with { message, venue }
-  create: async (venueData) => (await request('/api/venues', { method: 'POST', body: venueData })).venue,
+  create: async (venueData) => (await request('/api/venues/', { method: 'POST', body: venueData })).venue,
 
   update: async (id, venueData) =>
     (await request(`/api/venues/${id}`, { method: 'PUT', body: venueData })).venue,
@@ -140,41 +166,36 @@ export const servicesApi = {
 
 // Users / Auth API
 export const authApi = {
-  login: (credentials) => request('/api/auth/login', {
+  login: ({ email, password }) => request('/api/auth/login', {
     method: 'POST',
-    body: credentials,
+    body: { email, password },
   }),
 
-  register: (userData) => request('/users/register', {
+  register: ({ full_name, email, password }) => request('/api/auth/signup', {
     method: 'POST',
-    body: userData,
+    body: { full_name, email, password },
   }),
 };
 
-// Events API
+// Events API (backend: backend/events.py, prefix /api/events)
 export const eventsApi = {
-  getAll: (params = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, val]) => {
-      if (val !== undefined && val !== null && val !== '') {
-        searchParams.set(key, val);
-      }
-    });
-    const query = searchParams.toString();
-    return request(`/events${query ? `?${query}` : ''}`);
-  },
+  // Public list of all events (with category, venue and city names)
+  getAll: () => request('/api/events'),
 
-  create: (eventData) => request('/events', {
+  // Only the logged-in user's own events (needs login)
+  getMine: () => request('/api/events/mine'),
+
+  create: (eventData) => request('/api/events', {
     method: 'POST',
     body: eventData,
   }),
 
-  update: (id, eventData) => request(`/events/${id}`, {
+  update: (id, eventData) => request(`/api/events/${id}`, {
     method: 'PUT',
     body: eventData,
   }),
 
-  delete: (id) => request(`/events/${id}`, {
+  delete: (id) => request(`/api/events/${id}`, {
     method: 'DELETE',
   }),
 };

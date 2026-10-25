@@ -1,23 +1,22 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, LogIn, Sparkles, AlertCircle } from 'lucide-react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Mail, Lock, LogIn, Sparkles } from 'lucide-react';
 import { authApi } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { DEMO_ACCOUNTS } from '../data/seedData';
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const toast = useToast();
 
   const [formData, setFormData] = useState({
-    email: '',
+    email: location.state?.email || '',
     password: '',
   });
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [showDemoBanner, setShowDemoBanner] = useState(true);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -35,73 +34,42 @@ export default function Login() {
     const password = formData.password;
 
     if (!emailTrimmed || !password) {
-      setErrorMessage('Incorrect email or password');
+      setErrorMessage('Invalid email or password');
       return;
     }
 
     setLoading(true);
 
     try {
-      // 1. Attempt POST /api/auth/login to backend
       const response = await authApi.login({
         email: emailTrimmed,
         password: password,
       });
 
-      if (response && response.role) {
-        const role = response.role.toLowerCase();
+      if (response && response.user && response.access_token) {
+        const user = response.user;
+        const role = (user.role || 'organizer').toLowerCase();
+
         login({
-          user_id: response.user_id,
-          name: response.name || response.full_name || emailTrimmed.split('@')[0],
-          email: response.email || emailTrimmed,
+          user_id: user.id,
+          name: user.full_name,
+          email: user.email || emailTrimmed,
           role: role,
-          token: response.token || 'backend-token',
+          token: response.access_token,
         });
 
-        toast.success(`Welcome, ${response.name || 'User'}!`);
+        toast.success(`Welcome, ${user.full_name || 'Organizer'}!`);
 
-        // Redirect admin to /admin and organizer to /manage-events
         if (role === 'admin') {
           navigate('/admin');
         } else {
           navigate('/manage-events');
         }
-        return;
       } else {
-        throw new Error('Invalid backend login response');
+        throw new Error('Invalid login response from server');
       }
     } catch (err) {
-      // 2. Backend is offline / failed -> fall back to local seed demo accounts
-      console.warn('Backend login endpoint unavailable, checking local demo accounts:', err.message);
-
-      const matchedAccount = DEMO_ACCOUNTS.find(
-        (acc) =>
-          acc.email.toLowerCase() === emailTrimmed &&
-          acc.password === password
-      );
-
-      if (matchedAccount) {
-        const role = matchedAccount.role.toLowerCase();
-        login({
-          user_id: matchedAccount.user_id,
-          name: matchedAccount.name,
-          email: matchedAccount.email,
-          role: role,
-          token: matchedAccount.token,
-        });
-
-        toast.success(`Signed in as ${matchedAccount.name} (${role === 'admin' ? 'Admin' : 'Organizer'})`);
-
-        // Redirect admin to /admin and organizer to /manage-events
-        if (role === 'admin') {
-          navigate('/admin');
-        } else {
-          navigate('/manage-events');
-        }
-      } else {
-        // Wrong credentials show "Incorrect email or password" under the form
-        setErrorMessage('Incorrect email or password');
-      }
+      setErrorMessage(err.message || 'Invalid email or password');
     } finally {
       setLoading(false);
     }
@@ -123,29 +91,6 @@ export default function Login() {
         </p>
       </div>
 
-      {/* Demonstration Mode Banner */}
-      {showDemoBanner && (
-        <div className="mb-6 p-4 rounded-xl bg-sand border border-sand-dark flex items-start gap-3 shadow-sm">
-          <AlertCircle className="w-5 h-5 text-wine flex-shrink-0 mt-0.5" />
-          <div className="text-xs text-ink/80">
-            <strong className="text-wine font-semibold block mb-1">
-              Demonstration Mode (DBMS Seed Accounts)
-            </strong>
-            <p className="text-ink/70 mb-2">
-              If the backend server is offline, use the verified seed accounts below:
-            </p>
-            <div className="space-y-1 font-mono text-[11px] bg-sand-dark/40 p-2.5 rounded-lg border border-sand-dark/60">
-              <div>
-                <strong className="text-wine">Admin:</strong> admin@eventilion.in / admin123
-              </div>
-              <div>
-                <strong className="text-wine">Organizer:</strong> organizer@eventilion.in / org123
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Login Card */}
       <div className="bg-sand rounded-2xl border border-sand-dark p-6 sm:p-8 shadow-poster space-y-6">
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
@@ -163,7 +108,7 @@ export default function Login() {
                 required
                 value={formData.email}
                 onChange={handleInputChange}
-                placeholder="name@eventilion.in"
+                placeholder="you@example.com"
                 className="w-full pl-11 pr-4 py-3 bg-sand-dark/30 border border-sand-dark rounded-xl text-sm font-medium text-ink placeholder-ink/40 focus:outline-none focus:ring-2 focus:ring-wine focus:bg-sand transition-all"
               />
             </div>
@@ -198,19 +143,30 @@ export default function Login() {
             }`}
           >
             <LogIn className="w-4 h-4" />
-            <span>{loading ? 'Signing in...' : 'Sign In'}</span>
+            <span>{loading ? 'Signing in…' : 'Sign In'}</span>
           </button>
 
-          {/* Error Message Display: Wrong credentials show "Incorrect email or password" under the form */}
-          {errorMessage && (
-            <div
-              id="login-error-message"
-              className="p-3 rounded-xl bg-red-100 border border-red-300 text-red-800 text-xs font-bold text-center mt-3 animate-fadeIn"
+          {/* Link under the button */}
+          <div className="pt-4 border-t border-sand-dark text-center text-xs text-ink/75">
+            New here?{' '}
+            <Link
+              to="/register"
+              className="text-wine font-bold hover:underline underline-offset-2 ml-1"
             >
-              {errorMessage}
-            </div>
-          )}
+              Create an account
+            </Link>
+          </div>
         </form>
+
+        {/* Backend error message displayed under the form */}
+        {errorMessage && (
+          <div
+            id="login-error-message"
+            className="p-3 rounded-xl bg-red-100 border border-red-300 text-red-800 text-xs font-bold text-center mt-3 animate-fadeIn"
+          >
+            {errorMessage}
+          </div>
+        )}
       </div>
     </div>
   );
